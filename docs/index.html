@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台股虛擬交易暨模型預測系統</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="logo-mark">▲</span>
+    <div>
+      <h1>台股虛擬交易暨模型預測系統</h1>
+      <p class="subtitle">LSTM+Attention · 29 維特徵（技術 12 + 情緒 5 + 法人/融資融券 12）</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="price-asof">價格截至 <span id="priceAsOf">—</span></div>
+    <div class="seg" id="sourceSeg">
+      <button class="seg-btn active" data-src="sim">模擬盤</button>
+      <button class="seg-btn" data-src="real">真實報價 (Yahoo)</button>
+    </div>
+    <span class="src-status" id="srcStatus"></span>
+    <button class="btn" id="btnRefresh">↻ 更新報價</button>
+    <button class="btn btn-ghost" id="btnReset">重置帳戶</button>
+  </div>
+</header>
+
+<div class="notice" id="dataNotice"></div>
+
+<nav>
+  <button class="nav-btn active" data-tab="dashboard">儀表板</button>
+  <button class="nav-btn" data-tab="market">行情 × 預測</button>
+  <button class="nav-btn" data-tab="trade">交易下單</button>
+  <button class="nav-btn" data-tab="positions">持倉損益</button>
+  <button class="nav-btn" data-tab="portfolio">投組建議</button>
+</nav>
+
+<div class="sim-bar" id="simBar" hidden>
+  <span class="sim-day" id="simDayLabel">模擬日 #1</span>
+  <span class="sim-vtime" id="simVTime">虛擬 09:00</span>
+  <label>虛擬日長度</label>
+  <select id="simLen" class="input slim">
+    <option value="5">5 分</option>
+    <option value="10" selected>10 分</option>
+    <option value="30">30 分</option>
+  </select>
+  <label>模型導向</label>
+  <input type="range" id="simInfluence" class="slider" min="0" max="100" value="100">
+  <span class="sim-infl" id="simInfluenceVal">100%</span>
+  <label>震盪強度</label>
+  <select id="simVol" class="input slim">
+    <option value="0.5">0.5×</option>
+    <option value="1" selected>1×</option>
+    <option value="2">2×</option>
+  </select>
+  <span class="hint">每個虛擬交易日收盤 = 模型預測價（重播）；每日收盤後重跑 export_webapp_data.py 取得「明日」預測</span>
+</div>
+
+<main>
+
+  <!-- ============ 儀表板 ============ -->
+  <section id="tab-dashboard" class="tab active">
+    <div class="cards">
+      <div class="card"><div class="card-label">現金餘額</div><div class="card-value" id="cCash">—</div></div>
+      <div class="card"><div class="card-label">持倉市值</div><div class="card-value" id="cPosition">—</div></div>
+      <div class="card"><div class="card-label">總資產</div><div class="card-value card-strong" id="cTotal">—</div></div>
+      <div class="card"><div class="card-label">總損益</div><div class="card-value" id="cPnl">—</div></div>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>帳戶淨值走勢</h3>
+        <div id="navChart" class="chart-box"></div>
+      </div>
+      <div class="panel">
+        <h3>持倉佔比</h3>
+        <div id="pieChart" class="chart-box pie-wrap"></div>
+        <div id="pieLegend" class="pie-legend"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>模型 Top 5 建議 <span class="hint">依預測次日報酬排序</span></h3>
+      <table class="table" id="topTable"></table>
+    </div>
+  </section>
+
+  <!-- ============ 行情 × 預測 ============ -->
+  <section id="tab-market" class="tab">
+    <div class="toolbar">
+      <input type="text" id="search" class="input" placeholder="搜尋代碼或名稱…">
+      <select id="filterSignal" class="input">
+        <option value="">全部訊號</option>
+        <option value="BUY">BUY 買進</option>
+        <option value="HOLD">HOLD 觀望</option>
+        <option value="SELL">SELL 賣出</option>
+      </select>
+      <span class="hint" id="mktCount"></span>
+    </div>
+    <table class="table row-click" id="marketTable"></table>
+    <div class="panel detail-panel" id="detailPanel" hidden>
+      <div class="detail-head">
+        <h3 id="dTitle">—</h3>
+        <button class="btn btn-ghost" id="btnBuyFromDetail">買入此股</button>
+      </div>
+      <div class="detail-stats" id="dStats"></div>
+      <div id="priceChart" class="chart-box tall"></div>
+      <p class="model-note" id="dModel"></p>
+    </div>
+  </section>
+
+  <!-- ============ 交易下單 ============ -->
+  <section id="tab-trade" class="tab">
+    <div class="grid-2">
+      <div class="panel">
+        <h3>虛擬下單</h3>
+        <div class="form-row">
+          <label>股票</label>
+          <select id="tStock" class="input"></select>
+        </div>
+        <div class="form-row">
+          <label>方向</label>
+          <div class="seg" id="sideSeg">
+            <button class="seg-btn active" data-side="buy">買進</button>
+            <button class="seg-btn" data-side="sell">賣出</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>張數（1 張 = 1000 股）</label>
+          <input type="number" id="tLots" class="input" min="1" step="1" value="1">
+        </div>
+        <div class="form-row">
+          <label>價格（限價）</label>
+          <input type="number" id="tPrice" class="input" min="0.01" step="0.01">
+        </div>
+        <div class="quote-line" id="tQuote"></div>
+        <div class="calc-preview" id="tCalc"></div>
+        <button class="btn btn-primary" id="btnSubmit">送出虛擬單</button>
+        <p class="hint">台股規則：手續費 0.1425%（最低 20 元）、賣出證交稅 0.3%、漲跌停 ±10%、T+2 交割（本模擬即時扣減現金）。</p>
+      </div>
+      <div class="panel">
+        <h3>交易紀錄</h3>
+        <table class="table" id="tradeLog"></table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 持倉 ============ -->
+  <section id="tab-positions" class="tab">
+    <div class="panel">
+      <h3>持倉明細</h3>
+      <table class="table" id="posTable"></table>
+      <p class="hint" id="posSummary"></p>
+    </div>
+  </section>
+
+  <!-- ============ 投組建議 ============ -->
+  <section id="tab-portfolio" class="tab">
+    <div class="panel">
+      <h3>模型投資組合模擬器</h3>
+      <p class="hint">依 LSTM+Attention 之預測次日報酬，模擬資金配置。預測基於歷史資料，<b>不構成投資建議</b>。</p>
+      <div class="form-inline">
+        <label>總資金（NT$）</label>
+        <input type="number" id="pCapital" class="input" value="1000000" min="10000" step="10000">
+        <label>模式</label>
+        <select id="pMode" class="input">
+          <option value="equal">等權重（Top 10）</option>
+          <option value="pred">預測報酬加權</option>
+          <option value="industry">產業分散（單一產業 ≤25%）</option>
+        </select>
+        <button class="btn btn-primary" id="btnOptimize">產生配置</button>
+        <button class="btn" id="btnApply" disabled>一鍵採用此組合</button>
+      </div>
+      <div class="calc-preview" id="pSummary"></div>
+      <table class="table" id="portfolioTable"></table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>畢業專題示範前端 · 資料來源：本專案模型真實輸出（<span id="genAt"></span>匯出）</span>
+  <span id="simClock"></span>
+</footer>
+
+<script src="mock_data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
