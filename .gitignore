@@ -1,0 +1,29 @@
+# === 版權語料：不隨 repo 公開（見 DATA_SOURCES.md）===
+/cnyes_news_snapshot_*.csv
+/yahoo_news_dated.csv
+/news_snapshot_*.zip
+
+# === 資料快取（可由原始資料重建，體積過大）===
+data/
+
+# === 大型內部產物 ===
+results/backup_*/
+results/*.log
+results/predictions_*.json
+results/sentiment_method_comparison.csv
+
+# === 模型權重：僅保留 pooled_*；逐股權重以 save_all_weights.py 重建 ===
+models/lstm_attention_*.pt
+
+# === 參考論文（版權屬出版社）===
+*.pdf
+
+# === Python ===
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+
+# === OS ===
+.DS_Store
+auto_chain.DONE

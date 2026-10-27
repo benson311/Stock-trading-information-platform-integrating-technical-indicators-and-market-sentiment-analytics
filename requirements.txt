@@ -1,0 +1,12 @@
+# 台灣股市情緒分析與預測系統 — 環境需求
+# Python 3.12 (miniconda), macOS / Linux 均可 (CPU 即可運行, 無需 GPU)
+#
+# 安裝: pip install -r requirements.txt
+
+pandas==2.3.3        # 資料處理 / parquet 讀寫
+numpy==1.26.4        # 數值運算
+torch==2.2.2         # LSTM+Attention / Pool 共訓模型 (CPU)
+scikit-learn==1.7.2  # RF/SVM 基線、XGBoost(HistGBM) 方向分類
+scipy==1.14.1        # 統計檢定 (t-test, 相關分析)
+requests==2.32.5     # TWSE / 新聞爬蟲
+pyarrow==25.0.1      # parquet 引擎
