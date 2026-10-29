@@ -340,6 +340,257 @@
     },
   };
 
+  /* ---------- 策略引擎 / K線形態比對 / AI 意見 ---------- */
+
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  function rsiN(h, n) {
+    n = n || 14;
+    let up = 0, dn = 0;
+    for (let i = h.length - n; i < h.length; i++) {
+      const d = h[i] - h[i - 1];
+      if (d > 0) up += d; else dn -= d;
+    }
+    if (dn === 0) return 100;
+    const rs = up / dn;
+    return 100 - 100 / (1 + rs);
+  }
+
+  function techScore(s) {
+    const h = s.history.map((x) => x[1]);
+    const c = h[h.length - 1];
+    const ma5 = s.ma5 || mean(h.slice(-5)), ma10 = s.ma10 || mean(h.slice(-10));
+    let sc = 0;
+    sc += (c > ma5 && ma5 > ma10) ? 30 : (c > ma10 ? 15 : 0);
+    const mom20 = c / h[h.length - 21] - 1;
+    sc += 25 * clamp01(0.5 + mom20 / 0.2);
+    const hi60 = Math.max(...h.slice(-60));
+    sc += (c >= hi60 * 0.97) ? 25 : 25 * clamp01(1 - (hi60 * 0.97 - c) / (hi60 * 0.1));
+    const rsi = rsiN(h, 14);
+    sc += (rsi >= 40 && rsi <= 65) ? 20 : (rsi < 40 ? 10 : 4);
+    return Math.round(Math.min(100, sc));
+  }
+
+  function newsScore(s) {
+    const base = clamp((s.newsAvg20 || 0) * 5, -1, 1);
+    let mom = 0;
+    if (s.news && s.news.length >= 6) {
+      const last5 = mean(s.news.slice(-5).map((x) => x[1]));
+      const prior = mean(s.news.slice(0, -5).map((x) => x[1]));
+      mom = clamp((last5 - prior) * 5, -1, 1);
+    }
+    return Math.round(50 + 30 * base + 20 * mom);
+  }
+
+  let ZMAP = null;
+  function compositeScore(s) {
+    if (!ZMAP) {
+      const fns = { pred: (x) => x.predReturn, tech: techScore, news: newsScore };
+      ZMAP = {};
+      for (const k in fns) {
+        const vs = D.stocks.map(fns[k]);
+        const m = mean(vs), sd = Math.sqrt(mean(vs.map((v) => (v - m) ** 2))) || 1;
+        ZMAP[k] = (x) => (fns[k](x) - m) / sd;
+      }
+    }
+    const v = 0.4 * ZMAP.pred(s) + 0.35 * ZMAP.tech(s) + 0.25 * ZMAP.news(s);
+    return Math.round(Math.max(0, Math.min(100, 50 + 20 * v)));
+  }
+
+  const Strategies = {
+    model: { label: "模型預測", desc: "依 LSTM+Attention 預測次日報酬排序（29 維特徵；研究顯示法人買賣超為最強訊號 t≈15）。分數＝預測報酬。",
+             score: (s) => s.predReturn, fmt: (v) => fmtPct(v), higherBetter: true },
+    kline: { label: "K 線技術", desc: "技術分 0~100 ＝ 均線多頭排列(30) + 20日動能(25) + 接近60日高點(25) + RSI14健康區(20)。屬順勢/動能選股。",
+             score: techScore, fmt: (v) => v.toFixed(0) },
+    news: { label: "新聞情緒", desc: "情緒分 0~100 ＝ 近20日淨情緒(±30) + 情緒動能(±20)，基準 50。資料來源：鉅亨+Yahoo 新聞詞典法評分。",
+            score: newsScore, fmt: (v) => v.toFixed(0) },
+    composite: { label: "綜合 AI", desc: "跨股 z-score 合成：模型預測×0.4 + K線技術×0.35 + 新聞情緒×0.25 → 0~100。",
+                 score: compositeScore, fmt: (v) => v.toFixed(0) },
+  };
+
+  const PatternMatch = {
+    L: 30, F: 20, windows: [],
+
+    zlog(closes) {
+      const r = [];
+      for (let i = 1; i < closes.length; i++) r.push(Math.log(closes[i] / closes[i - 1]));
+      const m = mean(r), sd = Math.sqrt(mean(r.map((x) => (x - m) ** 2))) || 1e-9;
+      return r.map((x) => (x - m) / sd);
+    },
+
+    build() {
+      this.windows = [];
+      D.stocks.forEach((s) => {
+        const h = s.history.map((x) => x[1]);
+        for (let i = 0; i + this.L + this.F <= h.length; i++) {
+          const seg = h.slice(i, i + this.L);
+          const r = [];
+          for (let k = 1; k < seg.length; k++) r.push(Math.log(seg[k] / seg[k - 1]));
+          const m = mean(r);
+          const sd = Math.sqrt(mean(r.map((x) => (x - m) ** 2))) || 1e-9;
+          this.windows.push({
+            code: s.code, name: s.name, i, sd,
+            pat: this.zlog(seg),
+            fwd: h.slice(i + this.L - 1, i + this.L + this.F),
+            fwdRet: h[i + this.L + this.F - 1] / h[i + this.L - 1] - 1,
+          });
+        }
+      });
+    },
+
+    find(code) {
+      const s = state.stocks[code];
+      const h = s.history.map((x) => x[1]);
+      const curStart = h.length - this.L;
+      const curSeg = h.slice(-this.L);
+      const curZ = this.zlog(curSeg);
+      const curRets = [];
+      for (let k = 1; k < curSeg.length; k++) curRets.push(Math.log(curSeg[k] / curSeg[k - 1]));
+      const curSd = Math.sqrt(mean(curRets.map((x) => (x - mean(curRets)) ** 2))) || 1e-9;
+      const minSd = Math.max(0.4 * curSd, 0.002);
+      const scored = [];
+      for (const w of this.windows) {
+        if (w.code === code && w.i + this.L > curStart - 5) continue;  // 排除自身重疊視窗
+        if (w.sd < minSd) continue;                                     // 排除死水平雜訊視窗
+        let d = 0;
+        for (let k = 0; k < this.L; k++) d += (curZ[k] - w.pat[k]) ** 2;
+        scored.push({ w, d: Math.sqrt(d) });
+      }
+      scored.sort((a, b) => a.d - b.d);
+      const perStock = {};
+      const top = [];
+      for (const x of scored) {                                         // 每檔最多 2 段 (多樣性)
+        if ((perStock[x.w.code] || 0) >= 2) continue;
+        perStock[x.w.code] = (perStock[x.w.code] || 0) + 1;
+        top.push({ code: x.w.code, name: x.w.name, dist: x.d,
+                   pat: x.w.pat, fwd: x.w.fwd, fwdRet: x.w.fwdRet });
+        if (top.length >= 6) break;
+      }
+      const fwdRets = top.map((t) => t.fwdRet);
+      return {
+        cur: h.slice(-this.L), curZ, top,
+        upRate: fwdRets.length ? fwdRets.filter((r) => r > 0).length / fwdRets.length : 0,
+        avgFwd: fwdRets.length ? mean(fwdRets) : 0,
+      };
+    },
+  };
+
+  function aiOpinion(code, pm) {
+    const s = state.stocks[code];
+    const h = s.history.map((x) => x[1]);
+    const tech = techScore(s);
+    const rsi = rsiN(h, 14);
+    const ma5 = s.ma5 || mean(h.slice(-5));
+    const c = h[h.length - 1];
+    let sc = 50 + 15 * (pm.upRate - 0.5) * 2 +
+             15 * clamp(s.predReturn / 0.05, -1, 1) +
+             10 * (tech - 50) / 50 +
+             10 * clamp((s.newsAvg20 || 0) * 5, -1, 1);
+    sc = Math.round(Math.max(0, Math.min(100, sc)));
+    const rating = sc >= 65 ? "偏多" : sc <= 45 ? "偏空" : "中性";
+    const newsV = s.newsAvg20 || 0;
+    const text =
+      `【形態比對】近 ${PatternMatch.L} 日走勢與歷史 ${pm.top.length} 段最相似` +
+      `（${pm.top.slice(0, 3).map((t) => t.code + " " + t.name).join("、")} 等），` +
+      `後續 ${PatternMatch.F} 日上漲比例 ${(pm.upRate * 100).toFixed(0)}%，平均 ${fmtPct(pm.avgFwd)}。\n` +
+      `【模型】預測次日 ${fmtPct(s.predReturn)}（${s.signal}，${s.reason || "—"}）。\n` +
+      `【技術】技術分 ${tech}/100，RSI14 ${rsi.toFixed(0)}，收盤${c >= ma5 ? "站上" : "跌破"} MA5。\n` +
+      `【新聞】近 20 日淨情緒 ${newsV.toFixed(2)}（${newsV > 0.05 ? "偏多" : newsV < -0.05 ? "偏空" : "中性"}）。\n` +
+      `【綜合】評分 ${sc}/100 → 時機評級：${rating}。\n` +
+      `風險：形態樣本僅 ${pm.top.length} 段、歷史相似不保證重演；本意見由規則式引擎彙整四類訊號，不構成投資建議。`;
+    return { score: sc, rating, text };
+  }
+
+  async function askClaude(code) {
+    const key = ($("#aiKey").value || localStorage.getItem("tw_ai_key") || "").trim();
+    if (!key) { toast("請先填入 Anthropic API key（僅存於你的瀏覽器）", true); return; }
+    localStorage.setItem("tw_ai_key", key);
+    const pm = PatternMatch.find(code);
+    const s = state.stocks[code];
+    const facts = {
+      股票: s.code + " " + s.name, 現價: livePrice(code),
+      模型預測次日報酬: s.predReturn, 訊號: s.signal,
+      技術分: techScore(s), RSI14: rsiN(s.history.map((x) => x[1]), 14),
+      形態比對_相似段數: pm.top.length,
+      形態比對_後20日上漲比例: Math.round(pm.upRate * 100) + "%",
+      形態比對_平均後20日報酬: (pm.avgFwd * 100).toFixed(1) + "%",
+      相似情境明細: pm.top.map((t) => ({ 股票: t.code, 後20日報酬: (t.fwdRet * 100).toFixed(1) + "%" })),
+      近20日新聞淨情緒: s.newsAvg20 || 0,
+    };
+    const box = $("#aiBox");
+    box.className = "opinion-box llm";
+    box.textContent = "Claude 分析中…（約數秒，費用自付）";
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-3-5-haiku-latest",
+          max_tokens: 700,
+          messages: [{
+            role: "user",
+            content: "你是嚴謹的台股分析助理。以下為量化事實（形態比對/模型預測/技術/新聞），" +
+              "請用繁體中文 150 字內給出『買進時機』意見：先講結論（偏多/中性/偏空），再給 1-2 個理由與 1 個風險。" +
+              "語氣保守、明確聲明不構成投資建議。事實：" + JSON.stringify(facts),
+          }],
+        }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const j = await r.json();
+      box.textContent = "【Claude 意見 · 僅供參考】\n" + (j.content && j.content[0] ? j.content[0].text : "(空回應)");
+    } catch (e) {
+      toast("Claude 呼叫失敗: " + e.message, true);
+      renderPattern(code);
+    }
+  }
+
+  function renderPattern(code) {
+    const pm = PatternMatch.find(code);
+    const s = state.stocks[code];
+    const op = aiOpinion(code, pm);
+    const rateCls = pm.upRate >= 0.66 ? "up" : pm.upRate <= 0.34 ? "down" : "flat";
+    $("#patternStats").innerHTML =
+      statHtml("相似情境", pm.top.length + " 段") +
+      statHtml("後20日上漲比例", (pm.upRate * 100).toFixed(0) + "%", rateCls) +
+      statHtml("平均後20日報酬", fmtPct(pm.avgFwd), pctClass(pm.avgFwd)) +
+      statHtml("模型預測次日", fmtPct(s.predReturn), pctClass(s.predReturn)) +
+      statHtml("時機評級", op.rating + " (" + op.score + "/100)",
+               op.rating === "偏多" ? "up" : op.rating === "偏空" ? "down" : "flat");
+    const L = PatternMatch.L, F = PatternMatch.F;
+    const cur = pm.cur.map((v, k) => ({ t: k, v: v / pm.cur[0] * 100, label: "" }));
+    const series = [{ points: cur, color: "#e6e8eb", width: 2.2 }];
+    const fwdPaths = [];
+    pm.top.forEach((t, i) => {
+      const base = t.fwd[0];
+      const col = PIE_COLORS[i % PIE_COLORS.length];
+      series.push({ points: t.pat.map((z, k) => ({ t: k, v: 100 + z * 6, label: "" })),
+                    color: col, width: 1, opacity: 0.55 });
+      series.push({ points: t.fwd.map((v, k) => ({ t: L - 1 + k, v: v / base * 100, label: "" })),
+                    color: col, width: 1.1, dash: "4,3" });
+      fwdPaths.push(t.fwd.map((v, k) => v / base * 100));
+    });
+    if (fwdPaths.length) {
+      const avgF = fwdPaths[0].map((_, k) => mean(fwdPaths.map((p) => p[k])));
+      series.push({ points: avgF.map((v, k) => ({ t: L - 1 + k, v, label: "" })),
+                    color: "#4c8dff", width: 2.4 });
+    }
+    const last = cur[cur.length - 1];
+    last.label = "今日";
+    cur[0].label = "30 日前";
+    svgLine($("#patternChart"), series, { vline: { t: L - 1, label: "今日" } });
+    $("#aiBox").className = "opinion-box";
+    $("#aiBox").textContent = op.text;
+    $("#patternStats").dataset.code = code;
+  }
+
+
   function tierCodes() {
     const all = D.stocks.map((s) => s.code);
     const holdings = Object.keys(state.account.positions);
@@ -477,6 +728,13 @@
              '<circle cx="' + X(t1) + '" cy="' + Y(opts.extend) + '" r="4" fill="#4c8dff"/>' +
              '<text x="' + (X(t1) - 6) + '" y="' + (Y(opts.extend) - 10) +
              '" fill="#4c8dff" font-size="10" text-anchor="end">預測 ' + opts.extend.toFixed(2) + "</text>";
+    }
+    if (opts.vline) {
+      const vx = X(opts.vline.t);
+      out += '<line x1="' + vx + '" y1="' + pad.t + '" x2="' + vx + '" y2="' + (H - pad.b) +
+             '" stroke="#4c8dff" stroke-width="1.2" stroke-dasharray="6,4" opacity="0.9"/>' +
+             '<text x="' + (vx + 4) + '" y="' + (pad.t + 12) + '" fill="#4c8dff" font-size="10">' +
+             (opts.vline.label || "") + "</text>";
     }
     const lb = series[0].points[0], le = series[0].points[series[0].points.length - 1];
     out += '<text x="' + pad.l + '" y="' + (H - 4) + '" fill="#8b949e" font-size="10">' + lb.label +
@@ -625,6 +883,7 @@
       statHtml("訊號", s.signal, s.signal === "BUY" ? "up" : s.signal === "SELL" ? "down" : "flat");
     drawStockChart(code);
     maybeRealHistory(code);
+    renderPattern(code);
     const mi = Api.getModelInfo();
     $("#dModel").textContent = "模型：" + mi.name + "。訊號規則：" + mi.signalRule + "。" + mi.note +
       "。依據：" + (s.reason || "—");
@@ -635,8 +894,69 @@
     return "<div><div class='stat-label'>" + label + "</div><div class='stat-val " + (cls || "") + "'>" + val + "</div></div>";
   }
 
+  function svgCandles(el, ohlc, maSeries, predPrice) {
+    const W = el.clientWidth || 600, H = el.clientHeight || 320;
+    const pad = { l: 8, r: 56, t: 12, b: 20 };
+    const closes = ohlc.map((x) => x[4]);
+    let mn = Math.min(...ohlc.map((x) => x[3])), mx = Math.max(...ohlc.map((x) => x[2]));
+    if (predPrice != null) { mn = Math.min(mn, predPrice); mx = Math.max(mx, predPrice); }
+    const padV = (mx - mn) * 0.06 || 1;
+    mn -= padV; mx += padV;
+    const n = ohlc.length;
+    const X = (i) => pad.l + ((i + 0.5) / n) * (W - pad.l - pad.r);
+    const Y = (v) => pad.t + (1 - (v - mn) / (mx - mn)) * (H - pad.t - pad.b);
+    const cw = Math.max(2, ((W - pad.l - pad.r) / n) * 0.62);
+    let out = '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none">';
+    for (let g = 0; g <= 4; g++) {
+      const yv = mn + ((mx - mn) * g) / 4, y = Y(yv);
+      out += '<line x1="' + pad.l + '" y1="' + y + '" x2="' + (W - pad.r) + '" y2="' + y +
+             '" stroke="#2a3140" stroke-width="1" stroke-dasharray="3,4"/>' +
+             '<text x="' + (W - pad.r + 4) + '" y="' + (y + 4) + '" fill="#8b949e" font-size="10">' +
+             yv.toFixed(yv >= 100 ? 0 : 2) + "</text>";
+    }
+    ohlc.forEach((d, i) => {
+      const [_, o, h, l, c] = d;
+      const up = c >= o;
+      const col = up ? "#f0534f" : "#2fbf71";
+      const x = X(i);
+      out += '<line x1="' + x + '" y1="' + Y(h) + '" x2="' + x + '" y2="' + Y(l) +
+             '" stroke="' + col + '" stroke-width="1"/>' +
+             '<rect x="' + (x - cw / 2) + '" y="' + Y(Math.max(o, c)) + '" width="' + cw +
+             '" height="' + Math.max(1, Math.abs(Y(o) - Y(c))) +
+             '" fill="' + (up ? col : "none") + '" stroke="' + col + '" stroke-width="1"/>';
+    });
+    maSeries.forEach((s) => {
+      if (!s.points.length) return;
+      let d = "M" + X(s.points[0].i) + "," + Y(s.points[0].v);
+      for (let i = 1; i < s.points.length; i++) d += " L" + X(s.points[i].i) + "," + Y(s.points[i].v);
+      out += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="1.2" opacity="0.85"/>';
+    });
+    if (predPrice != null) {
+      const py = Y(predPrice);
+      out += '<line x1="' + pad.l + '" y1="' + py + '" x2="' + (W - pad.r) + '" y2="' + py +
+             '" stroke="#4c8dff" stroke-width="1.4" stroke-dasharray="5,5"/>' +
+             '<text x="' + (W - pad.r + 4) + '" y="' + (py + 4) + '" fill="#4c8dff" font-size="10">預測 ' +
+             predPrice.toFixed(2) + "</text>";
+    }
+    out += '<text x="' + pad.l + '" y="' + (H - 4) + '" fill="#8b949e" font-size="10">' + ohlc[0][0] +
+           '</text><text x="' + (W - pad.r) + '" y="' + (H - 4) +
+           '" fill="#8b949e" font-size="10" text-anchor="end">' + ohlc[n - 1][0] + "</text></svg>";
+    el.innerHTML = out;
+  }
+
   function drawStockChart(code, historyOverride) {
     const s = state.stocks[code];
+    if (s.ohlc && s.ohlc.length >= 30) {
+      const closes = s.ohlc.map((x) => x[4]);
+      const maOf = (n, col) => closes.map((_, i) => {
+        if (i < n - 1) return null;
+        return { i, v: mean(closes.slice(i - n + 1, i + 1)) };
+      }).filter(Boolean);
+      svgCandles($("#priceChart"), s.ohlc,
+                 [{ color: "#f0534f", points: maOf(5) }, { color: "#2fbf71", points: maOf(10) }],
+                 s.predPrice);
+      return;
+    }
     const hist = (historyOverride && historyOverride.length > 10
       ? historyOverride.map((h) => ({ t: h[0], v: h[1], label: "" }))
       : s.history.map((h) => ({ t: new Date(h[0]).getTime(), v: h[1], label: "" })));
@@ -818,30 +1138,30 @@
   function optimizePortfolio() {
     const capital = parseFloat($("#pCapital").value) || 0;
     const mode = $("#pMode").value;
+    const strat = Strategies[$("#pStrategy").value];
     if (capital < 10000) { toast("資金至少 NT$10,000", true); return; }
-    let cands = D.stocks.filter((s) => s.predReturn > 0 && s.signal !== "SELL")
-                        .sort((a, b) => b.predReturn - a.predReturn);
+    if (!strat) { toast("未知策略", true); return; }
+
+    const scored = D.stocks.map((s) => ({ s, sc: strat.score(s) }))
+                           .filter((x) => x.sc > 0)
+                           .sort((a, b) => b.sc - a.sc);
+    let cands;
     if (mode === "industry") {
-      const cap = {}, picked = [];
-      for (const s of cands) {
-        const ind = s.industry || "其他";
-        const cur = picked.filter((p) => (p.industry || "其他") === ind)
-                          .reduce((a, b) => a + b.w, 0);
-        if (picked.length < 10 && cur < 0.25) {
-          picked.push(s); if (picked.length >= 10) break;
-        }
+      const picked = [];
+      for (const x of scored) {
+        if (picked.length >= 10) break;
+        const ind = x.s.industry || "其他";
+        const cur = picked.filter((p) => (p.industry || "其他") === ind).length;
+        if (cur < 3) { x.s.w = 0; picked.push(x.s); }
       }
-      cands = picked;
-      const base = picked.map((s) => ({ s, w: Math.min(0.25, 1 / picked.length) }));
-      const sum = base.reduce((a, b) => a + b.w, 0);
-      cands = base.map((b) => Object.assign(b.s, { w: b.w / sum }));
+      cands = picked.map((s) => Object.assign(s, { w: 1 / Math.max(picked.length, 1) }));
     } else if (mode === "equal") {
-      cands = cands.slice(0, 10).map((s) => Object.assign(s, { w: 1 / Math.min(10, cands.length) }));
+      cands = scored.slice(0, 10).map((x) => Object.assign(x.s, { w: 1 / Math.min(10, scored.length) }));
     } else {
-      const top = cands.slice(0, 10);
-      const sumR = top.reduce((a, b) => a + b.predReturn, 0);
-      if (sumR <= 0) { toast("無正向預測標的", true); return; }
-      cands = top.map((s) => Object.assign(s, { w: s.predReturn / sumR }));
+      const top = scored.slice(0, 10);
+      const sumS = top.reduce((a, b) => a + b.sc, 0);
+      if (sumS <= 0) { toast("此策略無正向評分標的", true); return; }
+      cands = top.map((x) => Object.assign(x.s, { w: x.sc / sumS }));
     }
 
     const budget = Math.min(capital, state.account.cash);
@@ -854,6 +1174,7 @@
       const shares = lots * LOT;
       const cost = buyCost(shares, px);
       rows.push({ s, px, lots, shares, cost: cost.total, fee: cost.fee,
+                  sc: strat.score(s),
                   pred: s.predReturn * s.w * (cost.total / budget) });
     });
     if (!rows.length) { toast("資金不足以買進任何一張，請提高金額", true); return; }
@@ -869,15 +1190,17 @@
     state.lastPortfolio = rows;
 
     $("#pSummary").innerHTML =
+      pRow("策略", "<span class='strategy-tag'>" + strat.label + "</span> " + strat.desc) +
       pRow("配置標的數", rows.length + " 檔") +
       pRow("預計投入（含手續費）", fmtMoney(totalCost) + " / 可用現金 " + fmtMoney(state.account.cash)) +
       pRow("模型預期次日報酬（加權）", "<span class='" + pctClass(expRet) + "'>" + fmtPct(expRet) + "</span>") +
       pRow("最大單一產業集中度", (conc * 100).toFixed(0) + (conc > 0.5 ? " — <span class='up'>過度集中，建議分散</span>" : "")) +
       "<div class='hint' style='margin-top:6px'>模型預測基於歷史資料與 ±10% 裁切，僅供模擬參考，不構成投資建議。</div>";
     $("#portfolioTable").innerHTML =
-      "<thead><tr><th>股票</th><th>訊號</th><th class='num-r'>權重</th><th class='num-r'>現價</th><th class='num-r'>張數</th><th class='num-r'>投入金額</th><th class='num-r'>預測報酬</th></tr></thead><tbody>" +
+      "<thead><tr><th>股票</th><th>訊號</th><th class='num-r'>策略分</th><th class='num-r'>權重</th><th class='num-r'>現價</th><th class='num-r'>張數</th><th class='num-r'>投入金額</th><th class='num-r'>預測報酬</th></tr></thead><tbody>" +
       rows.map((r) => "<tr><td><b>" + r.s.code + "</b> " + r.s.name + "</td><td>" + signalBadge(r.s.signal) +
-        "</td><td class='num-r'>" + (r.s.w * 100).toFixed(1) + "%</td>" +
+        "</td><td class='num-r'>" + strat.fmt(r.sc) + "</td>" +
+        "<td class='num-r'>" + (r.s.w * 100).toFixed(1) + "%</td>" +
         "<td class='num-r'>" + r.px.toFixed(2) + "</td><td class='num-r'>" + r.lots + "</td>" +
         "<td class='num-r'>" + fmtMoney(r.cost) + "</td>" +
         "<td class='num-r " + pctClass(r.s.predReturn) + "'>" + fmtPct(r.s.predReturn) + "</td></tr>").join("") +
@@ -1005,6 +1328,7 @@
     renderAll();
     renderSrcStatus();
     MarketSim.init();
+    PatternMatch.build();
     $("#simLen").onchange = () => { MarketSim.dayMinutes = +$("#simLen").value; MarketSim.start(false); };
     $("#simVol").onchange = () => { MarketSim.volMult = +$("#simVol").value; };
     $("#simInfluence").oninput = () => {
@@ -1055,6 +1379,14 @@
     };
     $("#btnOptimize").onclick = optimizePortfolio;
     $("#btnApply").onclick = applyPortfolio;
+    $("#pStrategy").onchange = () => {
+      const st = Strategies[$("#pStrategy").value];
+      $("#pStrategyDesc").innerHTML = st ? "<span class='strategy-tag'>" + st.label + "</span> " + st.desc : "";
+    };
+    $("#pStrategy").onchange();
+    $("#btnRerunPattern").onclick = () => { if (state.selected) renderPattern(state.selected); };
+    $("#btnAskClaude").onclick = () => { if (state.selected) askClaude(state.selected); };
+    $("#aiKey").value = localStorage.getItem("tw_ai_key") || "";
 
     setInterval(snapshotNav, 30000);
     setInterval(renderSrcStatus, 5000);

@@ -107,6 +107,20 @@
       <div class="detail-stats" id="dStats"></div>
       <div id="priceChart" class="chart-box tall"></div>
       <p class="model-note" id="dModel"></p>
+
+      <div class="panel sub-panel">
+        <h3>K 線形態比對 — 「現在的走勢，歷史上像什麼？」</h3>
+        <p class="hint">以近 30 日報酬形態在 302 檔 × 121 日歷史中搜尋最相似視窗，展示各相似情境的「後續 20 日」實際走勢。歷史相似不保證重演。</p>
+        <div class="pattern-stats" id="patternStats"></div>
+        <div id="patternChart" class="chart-box"></div>
+        <div class="opinion-box" id="aiBox"></div>
+        <div class="ai-actions">
+          <button class="btn" id="btnRerunPattern">↻ 重新比對</button>
+          <input type="password" id="aiKey" class="input slim" placeholder="Anthropic API key (選配, 存本機)">
+          <button class="btn" id="btnAskClaude">詢問 Claude 意見</button>
+        </div>
+        <p class="hint" id="aiNote">上方意見由規則式分析引擎產生（彙整形態比對/模型/技術/新聞四類訊號）；填入 API key 可改由 Claude 生成（費用自付，key 僅存於你的瀏覽器）。</p>
+      </div>
     </div>
   </section>
 
@@ -158,20 +172,29 @@
   <!-- ============ 投組建議 ============ -->
   <section id="tab-portfolio" class="tab">
     <div class="panel">
-      <h3>模型投資組合模擬器</h3>
-      <p class="hint">依 LSTM+Attention 之預測次日報酬，模擬資金配置。預測基於歷史資料，<b>不構成投資建議</b>。</p>
+      <h3>策略型投資組合模擬器</h3>
+      <p class="hint">選擇訊號來源產生選股與權重。所有評分皆可解釋（見策略說明），預測基於歷史資料，<b>不構成投資建議</b>。</p>
       <div class="form-inline">
+        <label>策略</label>
+        <select id="pStrategy" class="input">
+          <option value="model">模型預測 (LSTM+Attention)</option>
+          <option value="kline">K 線技術 (均線/動能/突破/RSI)</option>
+          <option value="news">新聞情緒加權</option>
+          <option value="composite">綜合 AI (模型40%+技術35%+新聞25%)</option>
+          <option value="fundamental" disabled>財報基本面 (管線尚未納入財報資料)</option>
+        </select>
         <label>總資金（NT$）</label>
         <input type="number" id="pCapital" class="input" value="1000000" min="10000" step="10000">
-        <label>模式</label>
+        <label>權重方式</label>
         <select id="pMode" class="input">
           <option value="equal">等權重（Top 10）</option>
-          <option value="pred">預測報酬加權</option>
+          <option value="pred">分數加權</option>
           <option value="industry">產業分散（單一產業 ≤25%）</option>
         </select>
         <button class="btn btn-primary" id="btnOptimize">產生配置</button>
         <button class="btn" id="btnApply" disabled>一鍵採用此組合</button>
       </div>
+      <div class="calc-preview" id="pStrategyDesc"></div>
       <div class="calc-preview" id="pSummary"></div>
       <table class="table" id="portfolioTable"></table>
     </div>

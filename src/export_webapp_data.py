@@ -70,6 +70,22 @@ def main():
         g = g.tail(HISTORY_DAYS + 1)
         history = [[d, round(float(c), 2)] for d, c in zip(g["date"], g["close"])]
         last_close = history[-1][1]  # 走勢最後一日收盤 (訊號檔無 last_close 欄)
+
+        # K 線 (近 60 日 OHLC, 供形態比對與蠟燭圖)
+        ohlc = []
+        for _, r2 in g.tail(60).iterrows():
+            if pd.notna(r2["open"]) and pd.notna(r2["high"]) and pd.notna(r2["low"]):
+                ohlc.append([r2["date"], round(float(r2["open"]), 2), round(float(r2["high"]), 2),
+                             round(float(r2["low"]), 2), round(float(r2["close"]), 2)])
+
+        # 個股新聞情緒 (近 60 日有新聞之日: [date, 淨情緒]) + 20 日均值
+        news = []
+        for _, r2 in g.tail(60).iterrows():
+            net = float(r2["sent_pos"]) - float(r2["sent_neg"])
+            if abs(net) > 1e-9:
+                news.append([r2["date"], round(net, 3)])
+        news_avg20 = round(float(g["sent_pos"].tail(20).mean() - g["sent_neg"].tail(20).mean()), 4)
+
         stocks.append({
             "code": code,
             "name": (meta.get(code, {}).get("name") or names.get(code) or code),
@@ -79,6 +95,9 @@ def main():
             "predReturn": round(float(row["pred_return"]), 6),
             "predPrice": round(float(row["pred_price"]), 2),
             "lastClose": last_close,
+            "ohlc": ohlc,
+            "news": news,
+            "newsAvg20": news_avg20,
             "ma5": round(float(row["ma5"]), 2),
             "ma10": round(float(row["ma10"]), 2),
             "history": history,

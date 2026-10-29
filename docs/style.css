@@ -158,6 +158,19 @@ select.input option { background: var(--panel-2); }
 .input.slim { padding: 4px 8px; min-width: 70px; }
 .slider { width: 120px; accent-color: var(--accent); }
 
+/* ---------- 形態比對 / AI 意見 ---------- */
+.sub-panel { margin-top: 14px; border-color: var(--border); }
+.pattern-stats { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; font-size: 13px; }
+.opinion-box {
+  background: var(--panel-2); border: 1px solid var(--accent); border-radius: 8px;
+  padding: 12px 14px; margin: 10px 0; font-size: 13px; line-height: 1.7; white-space: pre-wrap;
+}
+.opinion-box.llm { border-color: #9d6cff; }
+.ai-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.ai-actions .input.slim { min-width: 200px; }
+.strategy-tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+  background: rgba(76,141,255,.15); color: var(--accent); font-weight: 700; }
+
 /* ---------- footer ---------- */
 footer {
   position: fixed; bottom: 0; left: 0; right: 0;
