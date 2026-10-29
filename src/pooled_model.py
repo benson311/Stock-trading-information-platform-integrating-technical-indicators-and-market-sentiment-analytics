@@ -235,6 +235,13 @@ def main():
     out = os.path.join(config.RESULTS_DIR, "pooled_model_results.csv")
     res.to_csv(out, index=False, encoding="utf-8-sig")
     print(f"\n已存 -> {out}")
+    try:
+        from src.experiment_log import log_trial
+        log_trial("train", f"pooled:{','.join(configs)}",
+                  {"epochs": epochs},
+                  {c: round(float(res[c].median()), 6) for c in res.columns if c.endswith("_MSE")})
+    except Exception:
+        pass
 
 
 def per_stock_baseline():

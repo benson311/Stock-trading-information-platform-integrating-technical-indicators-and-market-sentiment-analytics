@@ -134,6 +134,25 @@ src/
 | `results/xgboost_inst_importance.csv` | 特徵重要度 |
 | `results/old_vs_new_29feat_summary.txt` | 17→29 維全量對照摘要 |
 
+## 測試與 CI
+
+- `tests/test_core.py`：以**合成資料**鎖定三個核心函式——滑動窗對位（`make_sequences_for_stock`）、切分協議（`split_train_test`）、台股費用回測（`run_backtest` 的手續費/證交稅/張數取整/T+2 交割時序）——不需真實 `data/` 即可執行
+- GitHub Actions（`.github/workflows/ci.yml`）：每次 push/PR 自動跑 `ruff`（僅檢查執行期錯誤）＋ `pytest`
+- 本機：`pytest tests -q`
+
+## 因子評估與實驗紀錄
+
+```bash
+python3 -m src.factor_eval        # Rank IC + 產業中性 IC + 五分位價差 (29 維全掃)
+python3 -m src.experiment_log     # 檢視 trials.jsonl (每次訓練/消融/評估自動記錄)
+```
+
+- `factor_eval`：MSE 之外的標準量化評估——**rank IC**（每日橫斷面特徵排序 vs 次日報酬排序）＋
+  **五分位價差**（Q5−Q1 等權日報酬差，年化＋t 檢定）＋**產業中性 IC**，
+  輸出 `results/factor_eval.csv`。實測亮點：RSI6 呈顯著**負** IC（日頻反轉，t≈−24）；
+  `trust_net_vol` 五分位價差年化 +71%（t≈15.6）——法人特徵在標準量化框架下同樣成立
+- `trials.jsonl`：每次實驗自動追加一行（時間/參數/指標/git sha），誠實累計「試過幾個設定」
+
 ## 引用
 
 - 方法參考：Fang, K. & Zhang, Y. (2024). *A BERT-Based Multi-Source Sentiment Analysis and

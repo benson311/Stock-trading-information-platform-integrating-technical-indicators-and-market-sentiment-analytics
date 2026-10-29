@@ -77,6 +77,15 @@ def main(epochs=60):
     out_df.to_csv(out, index=False, encoding="utf-8-sig")
     print("\n" + out_df.to_string(index=False))
     print(f"\n已存 -> {out}")
+    try:
+        from src.experiment_log import log_trial
+        log_trial("ablation", "institutional_20stocks",
+                  {"epochs": epochs},
+                  {"mse_with_inst": round(float(df["MSE_with_inst"].mean()), 6),
+                   "mse_no_inst": round(float(df["MSE_no_inst"].mean()), 6),
+                   "n_better": int(n_better)})
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

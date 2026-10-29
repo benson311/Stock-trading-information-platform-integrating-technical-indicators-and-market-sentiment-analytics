@@ -1,0 +1,1 @@
+{"ts": "2026-10-29 15:50:31", "kind": "factor_eval", "name": "rank_ic_quintile_v1", "params": {"n_features": 29}, "metrics": {"top_ic_t": -24.3, "inst_sig": 11}, "git_sha": "b97730b", "notes": "首跑: IC+五分位 (results/factor_eval.csv)"}

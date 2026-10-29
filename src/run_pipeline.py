@@ -133,6 +133,14 @@ def main():
     with open(preds_json, "w", encoding="utf-8") as f:
         json.dump(preds_all, f)
     print(f"[{model}] pipeline 完成 -> {acc_csv}, {bt_csv}, {preds_json}")
+    try:
+        from src.experiment_log import log_trial
+        acc = pd.read_csv(acc_csv, dtype={"code": str})
+        log_trial("train", f"run_pipeline:{model}", {"epochs": epochs, "n_codes": len(acc)},
+                  {"mse_median": round(float(acc["MSE"].median()), 6),
+                   "dir_mean": round(float(acc["direction_acc"].mean()), 4)})
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
