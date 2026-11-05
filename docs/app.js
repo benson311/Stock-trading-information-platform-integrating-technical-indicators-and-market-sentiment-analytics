@@ -1,8 +1,19 @@
 (function () {
   "use strict";
 
+  // 載入失敗可視化: 任何啟動期錯誤都顯示在 boot banner (不再無聲死亡)
+  window.addEventListener("error", (ev) => {
+    const b = document.getElementById("bootMsg");
+    if (b) {
+      b.innerHTML = "⚠️ 前端載入失敗：" + (ev.message || "未知錯誤") +
+        "<br>請重新整理；持續失敗請檢查網路或改用電腦瀏覽器。";
+      document.getElementById("bootBanner").classList.add("err");
+      document.getElementById("bootBanner").style.display = "flex";
+    }
+  });
+
   const D = window.MOCK_DATA;
-  const FEES = D.fees;
+  const FEES = (D && D.fees) || { commission: 0.001425, minFee: 20, tax: 0.003 };
   const LOT = 1000;
   const LIMIT = 0.10;
 
@@ -683,6 +694,9 @@
     } else {
       RATE.consecFail++;
       RATE.period = Math.min(RATE.ceil, RATE.period * 2);
+      if (RATE.consecFail === 1) {
+        toast("真實報價三個來源都失敗（Yahoo 可能正對此網路節流）——已保留最後價格；模擬盤不受影響，稍後自動重試", true);
+      }
       if (RATE.consecFail >= 3) {
         RATE.cooldownUntil = Date.now() + 60000 * Math.min(RATE.consecFail - 2, 5);
         toast("報價來源連續失敗，冷卻 " + Math.round((RATE.cooldownUntil - Date.now()) / 1000) + " 秒後重試", true);
@@ -1383,12 +1397,22 @@
   }
 
   function init() {
+    if (!D || !D.stocks || !D.stocks.length) {
+      const bb = document.getElementById("bootBanner");
+      bb.classList.add("err");
+      bb.style.display = "flex";
+      document.getElementById("bootMsg").innerHTML =
+        "⚠️ 市場資料檔 (mock_data.js) 載入失敗——請重新整理頁面；" +
+        "若持續失敗可能是網路對 GitHub Pages 不穩，改用電腦瀏覽器或稍後再試。";
+      return;
+    }
+    document.getElementById("bootBanner").style.display = "none";
     D.stocks.forEach((s) => { state.stocks[s.code] = s; });
     load();
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v7 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v8 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
