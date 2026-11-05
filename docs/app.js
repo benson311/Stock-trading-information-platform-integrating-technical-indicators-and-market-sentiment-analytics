@@ -1143,7 +1143,7 @@
         const s = state.stocks[p.code];
         const cost = p.shares * p.avg, pnl = p.market - cost;
         const ret = pnl / cost;
-        return "<tr><td><b>" + p.code + "</b> " + s.name + "</td>" +
+        return "<tr data-code='" + p.code + "'><td><b>" + p.code + "</b> " + s.name + "</td>" +
           "<td class='num-r'>" + p.shares.toLocaleString() + "</td>" +
           "<td class='num-r'>" + p.avg.toFixed(2) + "</td>" +
           "<td class='num-r'>" + livePrice(p.code).toFixed(2) + "</td>" +
@@ -1152,6 +1152,10 @@
           "<td class='num-r " + pctClass(ret) + "'>" + fmtPct(ret) + "</td></tr>";
       }).join("") : "<tr><td colspan='7' class='hint' style='text-align:center;padding:24px'>尚無持倉</td></tr>") +
       "</tbody>";
+    $("#posTable").querySelectorAll("tbody tr[data-code]").forEach((tr) => {
+      tr.style.cursor = "pointer";
+      tr.onclick = () => { switchTab("market"); selectStock(tr.dataset.code); };
+    });
     const posV = positionValue();
     $("#posSummary").innerHTML = rows.length ?
       "持倉市值 " + fmtMoney(posV) + " · 現金 " + fmtMoney(state.account.cash) +
@@ -1170,7 +1174,10 @@
     const top = D.stocks.filter((s) => s.predReturn > 0).slice(0, 5);
     $("#topTable").innerHTML =
       "<thead><tr><th>#</th><th>股票</th><th class='num-r'>現價</th><th class='num-r'>預測報酬</th><th>訊號</th></tr></thead><tbody>" +
-      top.map((s, i) => "<tr><td>" + (i + 1) + "</td>" + stockRowCore(s) + "</tr>").join("") + "</tbody>";
+      top.map((s, i) => "<tr data-code='" + s.code + "'><td>" + (i + 1) + "</td>" + stockRowCore(s) + "</tr>").join("") + "</tbody>";
+    $("#topTable").querySelectorAll("tbody tr").forEach((tr) => {
+      tr.onclick = () => { switchTab("market"); selectStock(tr.dataset.code); };
+    });
     drawNavChart();
     drawPie();
   }
@@ -1381,6 +1388,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
+      "【前端 v7 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
