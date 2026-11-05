@@ -176,7 +176,7 @@
         if (pz > 0) {
           state.live[c] = pz;
           if (y > 0) state.base[c] = y;
-          state.realStatus.quoteTime = r.tlong || null;
+          state.realStatus.quoteTime = (typeof r.tlong === "number" && r.tlong > 0) ? r.tlong : null;
           got.add(c); ok++;
         }
       });
@@ -910,7 +910,7 @@
       "<th class='num-r'>模型預測報酬</th><th class='num-r'>預測價</th><th>訊號</th><th>依據</th><th>產業</th></tr></thead>" +
       "<tbody>" + list.map(stockRowHtml).join("") + "</tbody>";
     $("#marketTable").querySelectorAll("tbody tr").forEach((tr) => {
-      tr.onclick = () => selectStock(tr.dataset.code);
+      tr.onclick = () => openDetail(tr.dataset.code);
     });
   }
 
@@ -920,6 +920,14 @@
       const h = await Api.fetchRealHistory(code);
       if (code === state.selected && h.length > 10) drawStockChart(code, h);
     } catch (e) { /* 保留專案資料走勢 */ }
+  }
+
+  function openDetail(code) {
+    selectStock(code);
+    const panel = $("#detailPanel");
+    if (panel && !panel.hidden) {
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   function selectStock(code) {
@@ -1168,7 +1176,7 @@
       "</tbody>";
     $("#posTable").querySelectorAll("tbody tr[data-code]").forEach((tr) => {
       tr.style.cursor = "pointer";
-      tr.onclick = () => { switchTab("market"); selectStock(tr.dataset.code); };
+      tr.onclick = () => { switchTab("market"); openDetail(tr.dataset.code); };
     });
     const posV = positionValue();
     $("#posSummary").innerHTML = rows.length ?
@@ -1190,7 +1198,7 @@
       "<thead><tr><th>#</th><th>股票</th><th class='num-r'>現價</th><th class='num-r'>預測報酬</th><th>訊號</th></tr></thead><tbody>" +
       top.map((s, i) => "<tr data-code='" + s.code + "'><td>" + (i + 1) + "</td>" + stockRowCore(s) + "</tr>").join("") + "</tbody>";
     $("#topTable").querySelectorAll("tbody tr").forEach((tr) => {
-      tr.onclick = () => { switchTab("market"); selectStock(tr.dataset.code); };
+      tr.onclick = () => { switchTab("market"); openDetail(tr.dataset.code); };
     });
     drawNavChart();
     drawPie();
@@ -1412,7 +1420,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v9 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v10 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
