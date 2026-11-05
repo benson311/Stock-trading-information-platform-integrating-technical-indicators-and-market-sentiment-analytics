@@ -555,53 +555,99 @@
     return { score: sc, rating, text };
   }
 
-  async function askClaude(code) {
-    const key = ($("#aiKey").value || localStorage.getItem("tw_ai_key") || "").trim();
-    if (!key) { toast("請先填入 Anthropic API key（僅存於你的瀏覽器）", true); return; }
-    localStorage.setItem("tw_ai_key", key);
-    const pm = PatternMatch.find(code);
+  function buildAIFacts(code, pm) {
     const s = state.stocks[code];
-    const facts = {
+    const h = s.history.map((x) => x[1]);
+    return {
       股票: s.code + " " + s.name, 現價: livePrice(code),
       模型預測次日報酬: s.predReturn, 訊號: s.signal,
-      技術分: techScore(s), RSI14: rsiN(s.history.map((x) => x[1]), 14),
+      技術分: techScore(s), RSI14: rsiN(h, 14),
       形態比對_相似段數: pm.top.length,
       形態比對_後20日上漲比例: Math.round(pm.upRate * 100) + "%",
       形態比對_平均後20日報酬: (pm.avgFwd * 100).toFixed(1) + "%",
       相似情境明細: pm.top.map((t) => ({ 股票: t.code, 後20日報酬: (t.fwdRet * 100).toFixed(1) + "%" })),
       近20日新聞淨情緒: s.newsAvg20 || 0,
     };
+  }
+
+  function aiPrompt(facts) {
+    return "你是嚴謹的台股分析助理。以下為量化事實（形態比對/模型預測/技術/新聞），" +
+      "請用繁體中文 150 字內給出『買進時機』意見：先講結論（偏多/中性/偏空），再給 1-2 個理由與 1 個風險。" +
+      "語氣保守、明確聲明不構成投資建議。事實：" + JSON.stringify(facts);
+  }
+
+  function extractInteractionText(j) {
+    if (typeof j.output_text === "string" && j.output_text.trim()) return j.output_text;
+    const texts = [];
+    (function walk(o) {
+      if (typeof o === "string") return;
+      if (Array.isArray(o)) { o.forEach(walk); return; }
+      if (o && typeof o === "object") {
+        if (o.type === "text" && o.text) texts.push(o.text);
+        Object.values(o).forEach(walk);
+      }
+    })(j.outputs !== undefined ? j.outputs : j);
+    return texts.join("\n").trim() || "(空回應)";
+  }
+
+  async function callGemini(key, model, prompt) {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({ model, input: prompt }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg = (j.error && j.error.message) || ("HTTP " + r.status);
+      throw new Error(msg.slice(0, 160));
+    }
+    return extractInteractionText(j);
+  }
+
+  async function callClaude(key, model, prompt) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({ model, max_tokens: 700, messages: [{ role: "user", content: prompt }] }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg = (j.error && j.error.message) || ("HTTP " + r.status);
+      throw new Error(msg.slice(0, 160));
+    }
+    return (j.content && j.content[0] ? j.content[0].text : "(空回應)");
+  }
+
+  async function askAI(code) {
+    const pm = PatternMatch.find(code);
+    const model = $("#aiModel").value;
+    const provider = model.startsWith("claude") ? "claude" : "gemini";
+    const key = ($("#aiKey").value || localStorage.getItem("tw_ai_key_" + provider) || "").trim();
+    if (!key) {
+      toast("請先填入 " + (provider === "gemini" ? "Gemini" : "Anthropic") + " API key（僅存於你的瀏覽器）", true);
+      return;
+    }
+    localStorage.setItem("tw_ai_key_" + provider, key);
     const box = $("#aiBox");
     box.className = "opinion-box llm";
-    box.textContent = "Claude 分析中…（約數秒，費用自付）";
+    box.textContent = "AI 分析中…（" + model + "，費用自付）";
     try {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": key,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-3-5-haiku-latest",
-          max_tokens: 700,
-          messages: [{
-            role: "user",
-            content: "你是嚴謹的台股分析助理。以下為量化事實（形態比對/模型預測/技術/新聞），" +
-              "請用繁體中文 150 字內給出『買進時機』意見：先講結論（偏多/中性/偏空），再給 1-2 個理由與 1 個風險。" +
-              "語氣保守、明確聲明不構成投資建議。事實：" + JSON.stringify(facts),
-          }],
-        }),
-      });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      const j = await r.json();
-      box.textContent = "【Claude 意見 · 僅供參考】\n" + (j.content && j.content[0] ? j.content[0].text : "(空回應)");
+      const text = provider === "claude"
+        ? await callClaude(key, model, aiPrompt(buildAIFacts(code, pm)))
+        : await callGemini(key, model, aiPrompt(buildAIFacts(code, pm)));
+      box.textContent = "【" + (provider === "claude" ? "Claude" : "Gemini") + " 意見 · " + model + " · 僅供參考】\n" + text;
     } catch (e) {
-      toast("Claude 呼叫失敗: " + e.message, true);
+      box.className = "opinion-box";
+      toast("AI 呼叫失敗: " + e.message, true);
       renderPattern(code);
     }
   }
+
 
   function renderPattern(code) {
     const pm = PatternMatch.find(code);
@@ -1539,8 +1585,18 @@
     };
     $("#pStrategy").onchange();
     $("#btnRerunPattern").onclick = () => { if (state.selected) renderPattern(state.selected); };
-    $("#btnAskClaude").onclick = () => { if (state.selected) askClaude(state.selected); };
-    $("#aiKey").value = localStorage.getItem("tw_ai_key") || "";
+    $("#btnAskAI").onclick = () => { if (state.selected) askAI(state.selected); };
+    const syncKeyPlaceholder = () => {
+      const prov = $("#aiModel").value.startsWith("claude") ? "claude" : "gemini";
+      $("#aiKey").placeholder = (prov === "gemini" ? "Gemini" : "Anthropic") + " API key (選配, 存本機)";
+      $("#aiKey").value = localStorage.getItem("tw_ai_key_" + prov) || "";
+    };
+    $("#aiModel").onchange = syncKeyPlaceholder;
+    syncKeyPlaceholder();
+    $("#aiKey").onchange = () => {
+      const prov = $("#aiModel").value.startsWith("claude") ? "claude" : "gemini";
+      if ($("#aiKey").value.trim()) localStorage.setItem("tw_ai_key_" + prov, $("#aiKey").value.trim());
+    };
 
     setInterval(snapshotNav, 30000);
     setInterval(renderSrcStatus, 5000);
