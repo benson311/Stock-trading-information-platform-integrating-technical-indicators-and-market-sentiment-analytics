@@ -1210,7 +1210,10 @@
       cands = top.map((x) => Object.assign(x.s, { w: x.sc / sumS }));
     }
 
-    const budget = Math.min(capital, state.account.cash);
+    const freeSim = $("#pFreeSim") ? $("#pFreeSim").checked : false;
+    const cashShort = capital > state.account.cash;
+    const simMode = freeSim && cashShort;            // 現金不足 + 使用者允許 → 純情境模擬
+    const budget = (freeSim || !cashShort) ? capital : state.account.cash;
     const rows = [];
     cands.forEach((s) => {
       const px = livePrice(s.code);
@@ -1234,11 +1237,18 @@
     });
     const conc = Math.max.apply(null, Object.values(byInd)) / totalCost;
     state.lastPortfolio = rows;
+    state.lastPortfolioSim = simMode;
+
+    const cashRow = simMode
+      ? pRow("資金模式", "<span class='strategy-tag'>🔒 純情境模擬</span> 帳戶現金不足（差 " +
+             fmtMoney(capital - state.account.cash) + "）——按輸入資金 <b>完整模擬</b>，不會實際下單")
+      : pRow("資金模式", "實際可下單（可用現金 " + fmtMoney(state.account.cash) + "）");
 
     $("#pSummary").innerHTML =
       pRow("策略", "<span class='strategy-tag'>" + strat.label + "</span> " + strat.desc) +
       pRow("配置標的數", rows.length + " 檔") +
-      pRow("預計投入（含手續費）", fmtMoney(totalCost) + " / 可用現金 " + fmtMoney(state.account.cash)) +
+      pRow("預計投入（含手續費）", fmtMoney(totalCost) + " / 輸入資金 " + fmtMoney(capital)) +
+      cashRow +
       pRow("模型預期次日報酬（加權）", "<span class='" + pctClass(expRet) + "'>" + fmtPct(expRet) + "</span>") +
       pRow("最大單一產業集中度", (conc * 100).toFixed(0) + (conc > 0.5 ? " — <span class='up'>過度集中，建議分散</span>" : "")) +
       "<div class='hint' style='margin-top:6px'>模型預測基於歷史資料與 ±10% 裁切，僅供模擬參考，不構成投資建議。</div>";
@@ -1251,12 +1261,17 @@
         "<td class='num-r'>" + fmtMoney(r.cost) + "</td>" +
         "<td class='num-r " + pctClass(r.s.predReturn) + "'>" + fmtPct(r.s.predReturn) + "</td></tr>").join("") +
       "</tbody>";
-    $("#btnApply").disabled = false;
+    $("#btnApply").disabled = simMode;
+    $("#btnApply").textContent = simMode ? "一鍵採用（模擬模式·不下單）" : "一鍵採用此組合";
     function pRow(a, b) { return "<div class='row'><span>" + a + "</span><span>" + b + "</span></div>"; }
   }
 
   function applyPortfolio() {
     if (!state.lastPortfolio) return;
+    if (state.lastPortfolioSim) {
+      toast("純情境模擬（現金不足）不會實際下單——請充值現金或調低資金後再採用", true);
+      return;
+    }
     const total = state.lastPortfolio.reduce((a, b) => a + b.cost, 0);
     if (total > state.account.cash) { toast("現金不足，請重新產生配置", true); return; }
     const acc = state.account;
