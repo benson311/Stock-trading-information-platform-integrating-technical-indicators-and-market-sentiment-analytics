@@ -101,10 +101,18 @@
       } catch (e) { /* 直連失敗 → 中繼 */ }
       if (!j) j = await relayJson(url);
       const res = j.chart.result[0];
-      const ts = res.timestamp || [], cl = res.indicators.quote[0].close || [];
+      const ts = res.timestamp || [];
+      const q = (res.indicators.quote && res.indicators.quote[0]) || {};
       const out = [];
       for (let i = 0; i < ts.length; i++) {
-        if (cl[i] != null) out.push([ts[i] * 1000, Math.round(cl[i] * 100) / 100]);
+        if (q.close && q.close[i] != null && q.open && q.open[i] != null &&
+            q.high && q.high[i] != null && q.low && q.low[i] != null) {
+          out.push([ts[i] * 1000,
+                    Math.round(q.open[i] * 100) / 100, Math.round(q.high[i] * 100) / 100,
+                    Math.round(q.low[i] * 100) / 100, Math.round(q.close[i] * 100) / 100]);
+        } else if (q.close && q.close[i] != null) {
+          out.push([ts[i] * 1000, Math.round(q.close[i] * 100) / 100]);
+        }
       }
       return out;
     },
@@ -979,13 +987,18 @@
 
   function drawStockChart(code, historyOverride) {
     const s = state.stocks[code];
-    if (s.ohlc && s.ohlc.length >= 30) {
-      const closes = s.ohlc.map((x) => x[4]);
-      const maOf = (n, col) => closes.map((_, i) => {
+    // OHLC 資料 (專案快照或 Yahoo 即時歷史) → 蠟燭圖
+    let ohlc = s.ohlc;
+    if (historyOverride && historyOverride.length > 10 && historyOverride[0].length >= 5) {
+      ohlc = historyOverride;                       // 真實報價模式: Yahoo 3 個月 OHLC
+    }
+    if (ohlc && ohlc.length >= 30) {
+      const closes = ohlc.map((x) => x[4]);
+      const maOf = (n) => closes.map((_, i) => {
         if (i < n - 1) return null;
         return { i, v: mean(closes.slice(i - n + 1, i + 1)) };
       }).filter(Boolean);
-      svgCandles($("#priceChart"), s.ohlc,
+      svgCandles($("#priceChart"), ohlc,
                  [{ color: "#f0534f", points: maOf(5) }, { color: "#2fbf71", points: maOf(10) }],
                  s.predPrice);
       return;
