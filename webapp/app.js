@@ -629,7 +629,15 @@
     const provider = model.startsWith("claude") ? "claude" : "gemini";
     const key = ($("#aiKey").value || localStorage.getItem("tw_ai_key_" + provider) || "").trim();
     if (!key) {
-      toast("請先填入 " + (provider === "gemini" ? "Gemini" : "Anthropic") + " API key（僅存於你的瀏覽器）", true);
+      const inp = $("#aiKey");
+      if (inp) {
+        inp.focus();
+        inp.style.borderColor = "#f0534f";
+        inp.style.background = "rgba(240,83,79,.08)";
+        setTimeout(() => { inp.style.borderColor = ""; inp.style.background = ""; }, 3000);
+      }
+      toast("請先在『" + (provider === "gemini" ? "Gemini" : "Anthropic") +
+            " API key』欄位貼上金鑰再按一次（只存本機瀏覽器，填過之後不用再填）", true);
       return;
     }
     localStorage.setItem("tw_ai_key_" + provider, key);
