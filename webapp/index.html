@@ -207,15 +207,23 @@
 
 <div id="bootBanner" class="boot-banner">
   <div class="boot-spin"></div>
-  <div id="bootMsg">載入市場資料中…（首次約 1.7MB，請稍候）</div>
+  <div id="bootMsg">載入市場資料中…（首次約 1.3MB，請稍候）</div>
 </div>
+<script>
+  setTimeout(function () {
+    var m = document.getElementById("bootMsg");
+    if (m && document.getElementById("bootBanner").style.display !== "none") {
+      m.textContent = "仍在載入大型資料檔…（你的網路到 GitHub Pages 較慢，再等一下或按 Cmd/Ctrl+Shift+R 重試）";
+    }
+  }, 15000);
+</script>
 
 <footer>
   <span>畢業專題示範前端 · 資料來源：本專案模型真實輸出（<span id="genAt"></span>匯出）</span>
   <span id="simClock"></span>
 </footer>
 
-<script src="mock_data.js?v=8" defer></script>
-<script src="app.js?v=8" defer></script>
+<script src="mock_data.js?v=9" defer></script>
+<script src="app.js?v=9" defer></script>
 </body>
 </html>
