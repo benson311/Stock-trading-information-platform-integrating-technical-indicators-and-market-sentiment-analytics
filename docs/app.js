@@ -889,8 +889,8 @@
     const ch = changePct(s.code);
     return "<tr data-code='" + s.code + "'>" +
       "<td><b>" + s.code + "</b> " + s.name + "</td>" +
-      "<td class='num-r'>" + livePrice(s.code).toFixed(2) + limitTag(s.code) + "</td>" +
-      "<td class='num-r " + pctClass(ch) + "'>" + fmtPct(ch) + "</td>" +
+      "<td class='num-r' data-kind='price'>" + livePrice(s.code).toFixed(2) + limitTag(s.code) + "</td>" +
+      "<td class='num-r " + pctClass(ch) + "' data-kind='chg'>" + fmtPct(ch) + "</td>" +
       "<td class='num-r " + pctClass(s.predReturn) + "'>" + fmtPct(s.predReturn) + "</td>" +
       "<td class='num-r'>" + s.predPrice.toFixed(2) + "</td>" +
       "<td>" + signalBadge(s.signal) + "</td>" +
@@ -898,12 +898,30 @@
       "<td class='hint'>" + (s.industry || "—") + "</td></tr>";
   }
 
-  function renderMarket() {
+  function marketFilterSig() {
+    return ($("#search").value || "").trim().toLowerCase() + "|" + ($("#filterSignal").value || "");
+  }
+
+  function marketList() {
     const q = ($("#search").value || "").trim().toLowerCase();
     const fs = $("#filterSignal").value;
-    let list = D.stocks.filter((s) =>
+    return D.stocks.filter((s) =>
       (!q || s.code.includes(q) || s.name.toLowerCase().includes(q)) &&
       (!fs || s.signal === fs));
+  }
+
+  let mktSig = null, priceCells = {};
+
+  function renderMarket() {
+    const sig = marketFilterSig();
+    if (mktSig === sig && Object.keys(priceCells).length) {
+      updateMarketPrices();
+      repositionDetail();
+      return;
+    }
+    mktSig = sig;
+    priceCells = {};
+    const list = marketList();
     $("#mktCount").textContent = list.length + " 檔";
     $("#marketTable").innerHTML =
       "<thead><tr><th>股票</th><th class='num-r'>現價</th><th class='num-r'>漲跌%</th>" +
@@ -911,7 +929,50 @@
       "<tbody>" + list.map(stockRowHtml).join("") + "</tbody>";
     $("#marketTable").querySelectorAll("tbody tr").forEach((tr) => {
       tr.onclick = () => openDetail(tr.dataset.code);
+      const code = tr.dataset.code;
+      const pc = tr.querySelector("[data-kind='price']");
+      const cc = tr.querySelector("[data-kind='chg']");
+      if (pc && cc) priceCells[code] = { pc, cc };
     });
+    repositionDetail();
+  }
+
+  function updateMarketPrices() {
+    for (const code in priceCells) {
+      const cells = priceCells[code];
+      if (!state.stocks[code]) continue;
+      cells.pc.childNodes[0].nodeValue = livePrice(code).toFixed(2);
+      const ch = changePct(code);
+      cells.cc.childNodes[0].nodeValue = fmtPct(ch);
+      cells.cc.className = "num-r " + pctClass(ch);
+    }
+  }
+
+  function repositionDetail() {
+    const panel = $("#detailPanel");
+    if (!panel) return;
+    document.querySelectorAll("#marketTable tr.detail-inline-row").forEach((r) => r.remove());
+    if (!state.selected) { panel.style.display = "none"; return; }
+    const row = $("#marketTable").querySelector("tbody tr[data-code='" + state.selected + "']");
+    if (!row) { panel.style.display = "none"; return; }
+    const drow = document.createElement("tr");
+    drow.className = "detail-inline-row";
+    const td = document.createElement("td");
+    td.colSpan = 8;
+    td.appendChild(panel);
+    panel.style.display = "";
+    drow.appendChild(td);
+    row.after(drow);
+  }
+
+  function openDetail(code) {
+    state.selected = code;
+    repositionDetail();              // 先把面板嵌入該列下方 (寬度正確)
+    selectStock(code);               // 再畫圖/統計/形態比對
+    const panel = $("#detailPanel");
+    if (panel && panel.style.display !== "none") {
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   }
 
   async function maybeRealHistory(code) {
@@ -920,14 +981,6 @@
       const h = await Api.fetchRealHistory(code);
       if (code === state.selected && h.length > 10) drawStockChart(code, h);
     } catch (e) { /* 保留專案資料走勢 */ }
-  }
-
-  function openDetail(code) {
-    selectStock(code);
-    const panel = $("#detailPanel");
-    if (panel && !panel.hidden) {
-      panel.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
   }
 
   function selectStock(code) {
@@ -1420,7 +1473,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v10 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v11 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +

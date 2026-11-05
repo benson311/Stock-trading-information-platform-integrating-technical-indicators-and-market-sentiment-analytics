@@ -179,6 +179,14 @@ footer {
   font-size: 12px; color: var(--text-dim);
 }
 
+/* ---------- 內嵌詳情列 (點股票展開在該列下方) ---------- */
+#marketTable tr.detail-inline-row > td {
+  padding: 0 12px 12px; background: var(--panel);
+  border-bottom: 2px solid var(--accent);
+}
+#marketTable tr.detail-inline-row .panel { margin: 12px 0 4px; background: var(--panel-2); }
+#marketTable tr.detail-inline-row .panel.sub-panel { margin-top: 10px; }
+
 /* 載入/啟動橫幅 */
 .boot-banner {
   position: fixed; inset: 0; z-index: 100;
