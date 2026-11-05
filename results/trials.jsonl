@@ -1,1 +1,3 @@
 {"ts": "2026-10-29 15:50:31", "kind": "factor_eval", "name": "rank_ic_quintile_v1", "params": {"n_features": 29}, "metrics": {"top_ic_t": -24.3, "inst_sig": 11}, "git_sha": "b97730b", "notes": "首跑: IC+五分位 (results/factor_eval.csv)"}
+{"ts": "2026-11-05 13:28:32", "kind": "data", "name": "mops_revenue_snapshot", "params": {"month": "11509"}, "metrics": {"n": 1087, "yoy_pos_ratio": 0.716}, "git_sha": "f9975a7", "notes": ""}
+{"ts": "2026-11-05 13:42:35", "kind": "backtest", "name": "limit_up_rule_rebuild", "params": {"rule": "exec_chg>=9.95% skip"}, "metrics": {"29d_old": -0.1073, "29d_new": -0.1086, "17d_old": -0.1107, "17d_new": -0.1136}, "git_sha": "f9975a7", "notes": "漲停鎖死不可成交修正 (cookman123 方法論移植)"}

@@ -11,6 +11,7 @@
 | 融資融券餘額（MI_MARGN） | 2011–2026 | TWSE 官方端點：`https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date=YYYYMMDD&response=json&selectType=STOCK` | ❌ 不附（同上） |
 | 個股日線（官方） | 2015–2024 | TWSE [STOCK_DAY](https://www.twse.com.tw/zh/page/trading/exchange/STOCK_DAY.html) | ❌ 不附 |
 | 個股日線（還原） | 2011–2026 | Yahoo Finance（`XXXX.TW` / [yfinance](https://pypi.org/project/yfinance/)） | ❌ 不附 |
+| 月營收（最新月快照） | 當月 | TWSE OpenAPI：`https://openapi.twse.com.tw/v1/opendata/t187ap05_L`（`src/fetch_revenue.py`；歷史逐月版需 MOPS t187ap05_L1 逐月爬蟲） | ❌ 不附 |
 | PTT Stock 板文章/留言 | 2015–2025 | [PTT web 公開 JSON](https://www.ptt.cc/bbs/Stock/index.html)（版權屬各原作者，僅供學術分析） | ❌ 不附 |
 | 鉅亨網新聞 | 2021–2026 | news.cnyes.com（版權屬鉅亨網，**僅供學術，不得公開轉載**） | ❌ 不附（格式見 `README_news.txt`） |
 | Yahoo 股市新聞 | 2025–2026 | tw.stock.yahoo.com（版權屬各原始媒體） | ❌ 不附 |

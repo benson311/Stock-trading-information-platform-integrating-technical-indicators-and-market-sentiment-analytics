@@ -27,11 +27,14 @@ def compute_ma(close, window):
 
 
 def run_backtest(close: pd.Series, pred_return: pd.Series = None,
-                 use_prediction: bool = True, initial=config.INITIAL_CAPITAL):
+                 use_prediction: bool = True, initial=config.INITIAL_CAPITAL,
+                 skip_limit: bool = True):
     """對單一序列回測, 回傳 (trade_log, metrics)。
 
     close: 收盤價 (index 為連續交易日 id)
     pred_return: 預測下一日報酬 (與 close 同 index, t 位預測 t->t+1)
+    skip_limit: 漲停鎖死不追價 (執行日報酬 ≥ +9.95% 買不到; ≤ −9.95% 賣不掉)。
+                外部實證: 模型選中股觸及漲跌停比例為母體 8.5 倍, 不做此修正會嚴重高估。
     """
     close = close.reset_index(drop=True).astype(float).values
     if pred_return is not None:
@@ -84,6 +87,11 @@ def run_backtest(close: pd.Series, pred_return: pd.Series = None,
 
         # 次日成交價 (用次日收盤近似)
         exec_price = close[t + 1]
+        exec_chg = close[t + 1] / close[t] - 1.0
+        if skip_limit and buy and exec_chg >= 0.0995:
+            buy = False   # 漲停鎖死 → 追不到
+        if skip_limit and sell and exec_chg <= -0.0995:
+            sell = False  # 跌停鎖死 → 賣不掉
 
         if buy and buy != sell:
             # 全倉買進 (簡化: 投入全部現金, 張數向下取整)

@@ -54,12 +54,16 @@ def make_sequences_for_stock(df: pd.DataFrame, window: int = config.WINDOW_SIZE,
     return np.array(X), np.array(y), np.array(out_dates), np.array(close_t)
 
 
-def split_train_test(X, y, dates, train_ratio: float = config.TRAIN_RATIO):
-    """時間順序切分 (不 shuffle)。"""
+def split_train_test(X, y, dates, train_ratio: float = config.TRAIN_RATIO, purge: int = 0):
+    """時間順序切分 (不 shuffle)。
+
+    purge: 剔除訓練端最後 purge 筆 —— 其標籤 (未來 h 日報酬) 會使用到測試期起點的
+    收盤價, 構成前視洩漏 (walk-forward purging, López de Prado)。
+    prepare_stock_data 預設 purge=horizon。"""
     n = len(X)
-    n_train = int(n * train_ratio)
+    n_train = max(0, int(n * train_ratio) - purge)
     return (X[:n_train], y[:n_train], dates[:n_train],
-            X[n_train:], y[n_train:], dates[n_train:])
+            X[n_train + purge:], y[n_train + purge:], dates[n_train + purge:])
 
 
 def normalize(X_train, X_test=None):
@@ -87,7 +91,7 @@ def prepare_stock_data(code: str, target: str = "return"):
     X, y, dates, close_t = make_sequences_for_stock(sub, target=target)
     if len(X) < config.WINDOW_SIZE:
         return None
-    Xtr, ytr, dtr, Xte, yte, dte = split_train_test(X, y, dates)
+    Xtr, ytr, dtr, Xte, yte, dte = split_train_test(X, y, dates, purge=config.FORECAST_HORIZON)
     ctr = close_t[:len(Xtr)]
     cte = close_t[len(Xtr):]
     Xtr_n, Xte_n, params = normalize(Xtr, Xte)

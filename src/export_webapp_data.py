@@ -55,6 +55,16 @@ def main():
                           encoding="utf-8"))
     names, t86_date = load_names()
 
+    # 月營收快照 (財報基本面策略)
+    rev_map = {}
+    rev_path = os.path.join(config.PROCESSED_DIR, "revenue_latest.parquet")
+    if os.path.exists(rev_path):
+        rv = pd.read_parquet(rev_path)
+        rev_map = {str(r["code"]): {"yoy": r["yoy_pct"], "mom": r["mom_pct"], "month": r["month"]}
+                   for _, r in rv.iterrows() if pd.notna(r["yoy_pct"])}
+    else:
+        print("! 找不到 revenue_latest.parquet —— 請先跑 python3 -m src.fetch_revenue")
+
     # 全部個股依預測報酬排序 (可選前 N 檔)
     sig = sig.sort_values("pred_return", ascending=False)
     if n_limit > 0:
@@ -86,6 +96,11 @@ def main():
                 news.append([r2["date"], round(net, 3)])
         news_avg20 = round(float(g["sent_pos"].tail(20).mean() - g["sent_neg"].tail(20).mean()), 4)
 
+        # 20 日平均成交金額 (百萬元) — 流動性過濾用
+        turnover20 = round(float((g["close"].tail(20) * g["volume"].tail(20)).mean()) / 1e6, 2)
+
+        rv = rev_map.get(code, {})
+
         stocks.append({
             "code": code,
             "name": (meta.get(code, {}).get("name") or names.get(code) or code),
@@ -98,6 +113,10 @@ def main():
             "ohlc": ohlc,
             "news": news,
             "newsAvg20": news_avg20,
+            "revYoy": (round(float(rv["yoy"]), 2) if "yoy" in rv and rv.get("yoy") is not None else None),
+            "revMom": (round(float(rv["mom"]), 2) if "mom" in rv and rv.get("mom") is not None else None),
+            "revMonth": rv.get("month", ""),
+            "turnover20": turnover20,
             "ma5": round(float(row["ma5"]), 2),
             "ma10": round(float(row["ma10"]), 2),
             "history": history,

@@ -71,6 +71,35 @@ def test_split_train_test_ordered_no_overlap():
     assert dtr[-1] < dte[0]
 
 
+def test_split_purge_removes_leaking_labels():
+    """purge: 訓練端最後 N 筆 (標籤跨入測試期) 應被剔除。"""
+    n = 40
+    X = np.arange(n).reshape(n, 1, 1).astype(float)
+    y = np.arange(n, dtype=float)
+    dates = np.array([f"d{i}" for i in range(n)])
+    Xtr, ytr, dtr, Xte, yte, dte = split_train_test(X, y, dates, purge=2)
+    ntr = int(n * config.TRAIN_RATIO)
+    assert len(Xtr) == ntr - 2 and len(Xte) == n - ntr          # 測試集不變
+    assert list(Xtr[:, 0, 0]) == list(range(ntr - 2))           # 剔除的是訓練「尾端」
+    assert list(Xte[:, 0, 0]) == list(range(ntr, n))
+
+
+def test_backtest_limit_up_not_fillable():
+    """漲停鎖死: 執行日 +10% 漲停 → 買單不可成交 (模型選中股觸及漲停為母體 8.5 倍)。"""
+    close = pd.Series([100.0] * 10 + [110.0] * 20)   # 第 11 天起 +10% 漲停價
+    pr = pd.Series([0.0] * 30)
+    pr.iloc[9] = 0.06                                 # t=9 買訊 → 執行日 close[10]=110 (+10%)
+    trades, _, _ = run_backtest(close, pr, use_prediction=True,
+                                initial=1_000_000, skip_limit=True)
+    limit_buys = [t for t in trades if t["action"] == "BUY" and
+                  close[t["t"]] / close[t["t"] - 1] - 1 >= 0.0995]
+    assert not limit_buys                             # 漲停日不應有成交
+    trades2, _, _ = run_backtest(close, pr, use_prediction=True,
+                                 initial=1_000_000, skip_limit=False)
+    assert any(t["action"] == "BUY" and close[t["t"]] / close[t["t"] - 1] - 1 >= 0.0995
+               for t in trades2)                      # 關閉規則 → 漲停日照買 (修正前行為)
+
+
 # ---------- 台股費用回測 ----------
 
 def test_backtest_fees_and_tax_roundtrip():

@@ -384,19 +384,48 @@
     return Math.round(50 + 30 * base + 20 * mom);
   }
 
-  let ZMAP = null;
-  function compositeScore(s) {
-    if (!ZMAP) {
-      const fns = { pred: (x) => x.predReturn, tech: techScore, news: newsScore };
-      ZMAP = {};
-      for (const k in fns) {
-        const vs = D.stocks.map(fns[k]);
-        const m = mean(vs), sd = Math.sqrt(mean(vs.map((v) => (v - m) ** 2))) || 1;
-        ZMAP[k] = (x) => (fns[k](x) - m) / sd;
-      }
+  let ZMAP = null, REV_PCT = null, VOL_PCT = null;
+  function buildCrossSections() {
+    if (ZMAP) return;
+    const fns = { pred: (x) => x.predReturn, tech: techScore, news: newsScore };
+    ZMAP = {};
+    for (const k in fns) {
+      const vs = D.stocks.map(fns[k]);
+      const m = mean(vs), sd = Math.sqrt(mean(vs.map((v) => (v - m) ** 2))) || 1;
+      ZMAP[k] = (x) => (fns[k](x) - m) / sd;
     }
+    // 月營收年增百分位 (財報策略)
+    const withRev = D.stocks.filter((s) => s.revYoy != null).sort((a, b) => a.revYoy - b.revYoy);
+    REV_PCT = {};
+    withRev.forEach((s, i) => { REV_PCT[s.code] = (i + 1) / withRev.length * 100; });
+    // 60 日波動百分位 (限流動性前段: 日均成交金額 ≥ 1 億)
+    const volOf = (s) => {
+      const h = s.history.map((x) => x[1]);
+      const r = [];
+      for (let i = h.length - 60; i < h.length; i++) r.push(Math.log(h[i] / h[i - 1]));
+      const m = mean(r);
+      return Math.sqrt(mean(r.map((x) => (x - m) ** 2)));
+    };
+    const liquid = D.stocks.filter((s) => (s.turnover20 || 0) >= 100);
+    const vs = liquid.map((s) => ({ code: s.code, v: volOf(s) })).sort((a, b) => a.v - b.v);
+    VOL_PCT = {};
+    vs.forEach((x, i) => { VOL_PCT[x.code] = (i + 1) / vs.length * 100; });
+  }
+
+  function compositeScore(s) {
+    buildCrossSections();
     const v = 0.4 * ZMAP.pred(s) + 0.35 * ZMAP.tech(s) + 0.25 * ZMAP.news(s);
     return Math.round(Math.max(0, Math.min(100, 50 + 20 * v)));
+  }
+
+  function fundamentalScore(s) {
+    buildCrossSections();
+    return Math.round(REV_PCT[s.code] || 0);
+  }
+
+  function highVolScore(s) {
+    buildCrossSections();
+    return Math.round(VOL_PCT[s.code] || 0);
   }
 
   const Strategies = {
@@ -408,6 +437,10 @@
             score: newsScore, fmt: (v) => v.toFixed(0) },
     composite: { label: "綜合 AI", desc: "跨股 z-score 合成：模型預測×0.4 + K線技術×0.35 + 新聞情緒×0.25 → 0~100。",
                  score: compositeScore, fmt: (v) => v.toFixed(0) },
+    fundamental: { label: "財報/月營收", desc: "最新月營收年增率百分位（TWSE OpenAPI，僅最新月）。外部實證：營收年增十分位多空扣成本年化約 +13%（t 2.36）；本專案事件研究亦以營收事件最強（創高 p<1e-21）。",
+                   score: fundamentalScore, fmt: (v) => v.toFixed(0) },
+    highvol: { label: "高波動溢酬 (學術實證)", desc: "流動性前段（日均成交金額 ≥1 億）中 60 日波動最高者。文獻：季頻通過 White Reality Check / Hansen SPA——但性質為 beta>1 的風險補償，非免費午餐。",
+               score: highVolScore, fmt: (v) => v.toFixed(0) },
   };
 
   const PatternMatch = {
