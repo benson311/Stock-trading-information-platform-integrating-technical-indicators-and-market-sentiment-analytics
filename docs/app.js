@@ -1110,8 +1110,63 @@
     }
     out += '<text x="' + pad.l + '" y="' + (H - 4) + '" fill="#8b949e" font-size="10">' + ohlc[0][0] +
            '</text><text x="' + (W - pad.r) + '" y="' + (H - 4) +
-           '" fill="#8b949e" font-size="10" text-anchor="end">' + ohlc[n - 1][0] + "</text></svg>";
+           '" fill="#8b949e" font-size="10" text-anchor="end">' + ohlc[n - 1][0] + "</text>";
+    out += '<line class="xh" x1="0" y1="' + pad.t + '" x2="0" y2="' + (H - pad.b) +
+           '" stroke="#8b949e" stroke-width="1" stroke-dasharray="3,3" opacity="0"/>' +
+           '<circle class="xh-c" r="3.5" fill="#4c8dff" stroke="#fff" stroke-width="1" opacity="0"/>' +
+           '<rect class="xh-overlay" x="' + pad.l + '" y="' + pad.t + '" width="' + (W - pad.l - pad.r) +
+           '" height="' + (H - pad.t - pad.b) + '" fill="transparent" style="cursor:crosshair"/>';
+    out += "</svg>";
     el.innerHTML = out;
+    if (!el.querySelector(".candle-tip")) {
+      el.insertAdjacentHTML("beforeend", '<div class="candle-tip"></div>');
+    }
+    // 滑鼠互動 (事件只綁一次於容器, 資料隨每次渲染更新)
+    const m5 = {}, m10 = {};
+    (maSeries[0] ? maSeries[0].points : []).forEach((p) => { m5[p.i] = p.v; });
+    (maSeries[1] ? maSeries[1].points : []).forEach((p) => { m10[p.i] = p.v; });
+    el.__candleCtx = { ohlc, m5, m10, pad, n, W, H, Y, innerW: W - pad.l - pad.r };
+    if (!el.__candleBound) {
+      el.__candleBound = true;
+      el.addEventListener("mousemove", (ev) => {
+        const ctx = el.__candleCtx;
+        const svg = el.querySelector("svg");
+        const tip = el.querySelector(".candle-tip");
+        if (!ctx || !svg || !tip) return;
+        const rect = svg.getBoundingClientRect();
+        if (!rect.width) return;
+        const mxv = (ev.clientX - rect.left) / rect.width * ctx.W;
+        let i = Math.round((mxv - ctx.pad.l) / (ctx.innerW / ctx.n) - 0.5);
+        i = Math.max(0, Math.min(ctx.n - 1, i));
+        const d = ctx.ohlc[i], prev = ctx.ohlc[i - 1];
+        const chg = prev ? (d[4] / prev[4] - 1) * 100 : null;
+        tip.innerHTML = "<b>" + d[0] + "</b><br>開 " + d[1].toFixed(2) + "　高 " + d[2].toFixed(2) +
+          "<br>低 " + d[3].toFixed(2) + "　收 <b>" + d[4].toFixed(2) + "</b>" +
+          (chg != null ? "<br>漲跌 <span class='" + (chg >= 0 ? "up" : "down") + "'>" +
+            (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%</span>" : "") +
+          "<br>MA5 " + (ctx.m5[i] != null ? ctx.m5[i].toFixed(2) : "—") +
+          "　MA10 " + (ctx.m10[i] != null ? ctx.m10[i].toFixed(2) : "—");
+        const elRect = el.getBoundingClientRect();
+        let tx = ev.clientX - elRect.left + 16;
+        if (tx > elRect.width - 185) tx = ev.clientX - elRect.left - 200;
+        tip.style.left = Math.max(2, tx) + "px";
+        tip.style.top = Math.max(4, ev.clientY - elRect.top - 24) + "px";
+        tip.style.display = "block";
+        const x = ctx.pad.l + ((i + 0.5) / ctx.n) * ctx.innerW;
+        const xh = el.querySelector(".xh");
+        xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.setAttribute("opacity", "0.85");
+        const dot = el.querySelector(".xh-c");
+        dot.setAttribute("cx", x); dot.setAttribute("cy", ctx.Y(d[4])); dot.setAttribute("opacity", "1");
+      });
+      el.addEventListener("mouseleave", () => {
+        const tip = el.querySelector(".candle-tip");
+        if (tip) tip.style.display = "none";
+        const xh = el.querySelector(".xh");
+        if (xh) xh.setAttribute("opacity", "0");
+        const dot = el.querySelector(".xh-c");
+        if (dot) dot.setAttribute("opacity", "0");
+      });
+    }
   }
 
   function drawStockChart(code, historyOverride) {
@@ -1527,7 +1582,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v11 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v12 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
