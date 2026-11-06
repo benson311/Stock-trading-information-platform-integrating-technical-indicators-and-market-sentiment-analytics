@@ -1,8 +1,12 @@
 (function () {
   "use strict";
 
-  // 載入失敗可視化: 任何啟動期錯誤都顯示在 boot banner (不再無聲死亡)
+  // 載入失敗可視化: 僅在「啟動階段」顯示橫幅; 啟動完成後的錯誤改為 console + toast
   window.addEventListener("error", (ev) => {
+    if (window.__bootDone) {
+      console.error("執行期錯誤:", ev.message, ev.error || "");
+      return;
+    }
     const b = document.getElementById("bootMsg");
     if (b) {
       b.innerHTML = "⚠️ 前端載入失敗：" + (ev.message || "未知錯誤") +
@@ -1105,7 +1109,8 @@
     cv.data = aggOHLC(ohlc, cv.tf);
     const n = cv.data.length;
     if (cv.nLast !== n) { cv.vs = null; cv.ve = null; cv.nLast = n; }
-    if (cv.ve == null || cv.vs == null || cv.ve > n || cv.ve - cv.vs < 3) {
+    if (cv.ve == null || cv.vs == null || !isFinite(cv.vs) || !isFinite(cv.ve) ||
+        cv.ve > n || cv.vs < 0 || cv.ve - cv.vs < 3) {
       cv.ve = n;
       cv.vs = Math.max(0, n - 60);
     }
@@ -1191,6 +1196,8 @@
     ma5all.forEach((p) => { m5[p.i] = p.v; });
     ma10all.forEach((p) => { m10[p.i] = p.v; });
     el.__cvCtx = { view, m5, m10, pad, m, W, H, Y, vs: cv.vs, ve: cv.ve, n, tf: cv.tf, predPrice };
+    // 幾何/長度欄位同步到 __cv (互動事件處理器讀取 cv.pad/cv.W/cv.n)
+    Object.assign(cv, { pad, W, H, Y, n, innerW: W - pad.l - pad.r, predPrice });
     if (!el.__cvBound) {
       el.__cvBound = true;
       bindChartInteractions(el);
@@ -1208,9 +1215,10 @@
 
     el.addEventListener("wheel", (ev) => {
       const cv = el.__cv;
-      if (!cv || !cv.data) return;
+      if (!cv || !cv.data || cv.n == null || !cv.pad) return;
       ev.preventDefault();
       const svg = el.querySelector("svg");
+      if (!svg) return;
       const rect = svg.getBoundingClientRect();
       const mxv = (ev.clientX - rect.left) / rect.width * cv.W;
       const m = cv.ve - cv.vs;
@@ -1233,8 +1241,9 @@
       if (!dragging) return;
       const cv = el.__cv;
       const svg = el.querySelector("svg");
+      if (!cv || cv.n == null || !cv.pad || !svg) { dragging = false; return; }
       const rect = svg.getBoundingClientRect();
-      const shift = -((ev.clientX - dragX) / rect.width) * (cv.W - cv.pad.l - cv.pad.r) / (cv.W - cv.pad.l - cv.pad.r) * (cv.ve - cv.vs);
+      const shift = -((ev.clientX - dragX) / rect.width) * (cv.ve - cv.vs);
       let vs = Math.round(dragVS + shift);
       vs = Math.max(0, Math.min(cv.n - (cv.ve - cv.vs), vs));
       cv.vs = vs; cv.ve = vs + (dragVE - dragVS);
@@ -1694,7 +1703,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v15 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v16 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
@@ -1791,6 +1800,7 @@
       $("#simClock").textContent = new Date().toLocaleString("zh-TW") +
         (state.source === "real" ? " · " + twMarketPhase() : "");
     }, 1000);
+    window.__bootDone = true;   // init 完成 → 之後的錯誤不再顯示「載入失敗」橫幅
   }
 
   // 動態載入器會在 DOM 就緒後才執行本腳本 → 兩種觸發時機都要支援
