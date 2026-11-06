@@ -237,7 +237,41 @@
   <span id="simClock"></span>
 </footer>
 
-<script src="mock_data.js?v=12" defer></script>
-<script src="app.js?v=12" defer></script>
+<script>
+  // 動態載入 + 自動重試: 部署同步空窗 (新版本網址短暫 404) 可自癒
+  (function () {
+    var V = "15";
+    var chain = Promise.resolve();
+    ["mock_data.js?v=" + V, "app.js?v=" + V].forEach(function (src) {
+      chain = chain.then(function () {
+        return new Promise(function (resolve, reject) {
+          var attempt = 0;
+          function tryLoad() {
+            var s = document.createElement("script");
+            s.src = src;
+            s.onload = resolve;
+            s.onerror = function () {
+              attempt++;
+              var msg = document.getElementById("bootMsg");
+              if (attempt <= 2) {
+                if (msg) msg.textContent = "載入重試中 (" + attempt + "/2)… " + src;
+                setTimeout(tryLoad, 3000);
+              } else {
+                reject(new Error("無法載入 " + src + " —— 可能部署更新中，請等 1~2 分鐘後重新整理"));
+              }
+            };
+            document.head.appendChild(s);
+          }
+          tryLoad();
+        });
+      });
+    });
+    chain.catch(function (e) {
+      var b = document.getElementById("bootBanner");
+      b.classList.add("err");
+      document.getElementById("bootMsg").textContent = "⚠️ " + e.message;
+    });
+  })();
+</script>
 </body>
 </html>

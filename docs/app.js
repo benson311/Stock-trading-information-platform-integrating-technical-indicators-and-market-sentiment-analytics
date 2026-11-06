@@ -1694,7 +1694,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v14 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v15 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
@@ -1793,5 +1793,10 @@
     }, 1000);
   }
 
-  document.addEventListener("DOMContentLoaded", init);
+  // 動態載入器會在 DOM 就緒後才執行本腳本 → 兩種觸發時機都要支援
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
