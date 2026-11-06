@@ -104,7 +104,7 @@
     },
     async fetchRealHistory(code) {
       const sym = code + (state.suffix[code] || ".TW");
-      const url = YAHOO.base + sym + "?interval=1d&range=3mo";
+      const url = YAHOO.base + sym + "?interval=1d&range=1y";
       let j = null;
       try {
         const r = await fetch(url);
@@ -1064,19 +1064,76 @@
     return "<div><div class='stat-label'>" + label + "</div><div class='stat-val " + (cls || "") + "'>" + val + "</div></div>";
   }
 
-  function svgCandles(el, ohlc, maSeries, predPrice) {
+  /* ---------- 互動式蠟燭圖引擎: 日/週/月聚合 + 滾輪縮放 + 拖曳平移 + tooltip ---------- */
+
+  function isoWeekKey(ds) {
+    const dt = new Date(ds + "T00:00:00Z");
+    const t = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+    const day = (t.getUTCDay() + 6) % 7;
+    t.setUTCDate(t.getUTCDate() - day + 3);
+    const firstThu = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+    const fd = (firstThu.getUTCDay() + 6) % 7;
+    firstThu.setUTCDate(firstThu.getUTCDate() - fd + 3);
+    const wk = 1 + Math.round((t - firstThu) / (7 * 864e5));
+    return t.getUTCFullYear() + "-W" + String(wk).padStart(2, "0");
+  }
+
+  function aggOHLC(ohlc, tf) {
+    if (tf === "d") return ohlc.map((r) => ({ d: r[0], o: r[1], h: r[2], l: r[3], c: r[4] }));
+    const out = [];
+    let cur = null, key = null;
+    for (const r of ohlc) {
+      const k = tf === "w" ? isoWeekKey(r[0]) : r[0].slice(0, 7);
+      if (k !== key) {
+        if (cur) out.push(cur);
+        cur = { d: r[0], o: r[1], h: r[2], l: r[3], c: r[4] };
+        key = k;
+      } else {
+        cur.h = Math.max(cur.h, r[2]);
+        cur.l = Math.min(cur.l, r[3]);
+        cur.c = r[4];
+        cur.d = r[0];
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  function renderCandleChart(el, ohlc, tf, predPrice) {
+    const cv = el.__cv || (el.__cv = { tf: "d", vs: null, ve: null, nLast: 0 });
+    if (tf) cv.tf = tf;
+    cv.data = aggOHLC(ohlc, cv.tf);
+    const n = cv.data.length;
+    if (cv.nLast !== n) { cv.vs = null; cv.ve = null; cv.nLast = n; }
+    if (cv.ve == null || cv.vs == null || cv.ve > n || cv.ve - cv.vs < 3) {
+      cv.ve = n;
+      cv.vs = Math.max(0, n - 60);
+    }
+    const view = cv.data.slice(cv.vs, cv.ve);
+    const m = view.length;
+    if (!m) { el.innerHTML = ""; return; }
+
+    const closesAll = cv.data.map((r) => r.c);
+    const maOf = (nn) => closesAll.map((_, i) => {
+      if (i < nn - 1) return null;
+      return { i, v: mean(closesAll.slice(i - nn + 1, i + 1)) };
+    }).filter(Boolean);
+    const ma5all = maOf(5), ma10all = maOf(10);
+
     const W = el.clientWidth || 600, H = el.clientHeight || 320;
     const pad = { l: 8, r: 56, t: 12, b: 20 };
-    const closes = ohlc.map((x) => x[4]);
-    let mn = Math.min(...ohlc.map((x) => x[3])), mx = Math.max(...ohlc.map((x) => x[2]));
-    if (predPrice != null) { mn = Math.min(mn, predPrice); mx = Math.max(mx, predPrice); }
+    let mn = Math.min(...view.map((r) => r.l)), mx = Math.max(...view.map((r) => r.h));
+    ma5all.concat(ma10all).forEach((p) => {
+      if (p.i >= cv.vs && p.i < cv.ve) { mn = Math.min(mn, p.v); mx = Math.max(mx, p.v); }
+    });
+    if (predPrice != null && cv.ve === n) { mn = Math.min(mn, predPrice); mx = Math.max(mx, predPrice); }
     const padV = (mx - mn) * 0.06 || 1;
     mn -= padV; mx += padV;
-    const n = ohlc.length;
-    const X = (i) => pad.l + ((i + 0.5) / n) * (W - pad.l - pad.r);
     const Y = (v) => pad.t + (1 - (v - mn) / (mx - mn)) * (H - pad.t - pad.b);
-    const cw = Math.max(2, ((W - pad.l - pad.r) / n) * 0.62);
-    let out = '<svg viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none">';
+    const cw = Math.max(1.5, ((W - pad.l - pad.r) / m) * 0.62);
+    const X = (i) => pad.l + ((i + 0.5) / m) * (W - pad.l - pad.r);
+
+    let out = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="cursor:crosshair">';
     for (let g = 0; g <= 4; g++) {
       const yv = mn + ((mx - mn) * g) / 4, y = Y(yv);
       out += '<line x1="' + pad.l + '" y1="' + y + '" x2="' + (W - pad.r) + '" y2="' + y +
@@ -1084,33 +1141,40 @@
              '<text x="' + (W - pad.r + 4) + '" y="' + (y + 4) + '" fill="#8b949e" font-size="10">' +
              yv.toFixed(yv >= 100 ? 0 : 2) + "</text>";
     }
-    ohlc.forEach((d, i) => {
-      const [_, o, h, l, c] = d;
-      const up = c >= o;
+    // 日期軸標註 (自適應間距)
+    const step = Math.max(1, Math.round(m / 7));
+    for (let i = 0; i < m; i += step) {
+      const d = view[i].d;
+      const lab = cv.tf === "m" ? d.slice(0, 7) : d.slice(5);
+      out += '<line x1="' + X(i) + '" y1="' + (H - pad.b) + '" x2="' + X(i) + '" y2="' + (H - pad.b + 4) +
+             '" stroke="#4a5364"/>' +
+             '<text x="' + X(i) + '" y="' + (H - 5) + '" fill="#8b949e" font-size="9" text-anchor="middle">' + lab + "</text>";
+    }
+    view.forEach((r, i) => {
+      const up = r.c >= r.o;
       const col = up ? "#f0534f" : "#2fbf71";
       const x = X(i);
-      out += '<line x1="' + x + '" y1="' + Y(h) + '" x2="' + x + '" y2="' + Y(l) +
+      out += '<line x1="' + x + '" y1="' + Y(r.h) + '" x2="' + x + '" y2="' + Y(r.l) +
              '" stroke="' + col + '" stroke-width="1"/>' +
-             '<rect x="' + (x - cw / 2) + '" y="' + Y(Math.max(o, c)) + '" width="' + cw +
-             '" height="' + Math.max(1, Math.abs(Y(o) - Y(c))) +
+             '<rect x="' + (x - cw / 2) + '" y="' + Y(Math.max(r.o, r.c)) + '" width="' + cw +
+             '" height="' + Math.max(1, Math.abs(Y(r.o) - Y(r.c))) +
              '" fill="' + (up ? col : "none") + '" stroke="' + col + '" stroke-width="1"/>';
     });
-    maSeries.forEach((s) => {
-      if (!s.points.length) return;
-      let d = "M" + X(s.points[0].i) + "," + Y(s.points[0].v);
-      for (let i = 1; i < s.points.length; i++) d += " L" + X(s.points[i].i) + "," + Y(s.points[i].v);
+    [{ pts: ma5all, color: "#f0534f" }, { pts: ma10all, color: "#2fbf71" }].forEach((s) => {
+      const pts = s.pts.filter((p) => p.i >= cv.vs && p.i < cv.ve)
+                      .map((p) => ({ i: p.i - cv.vs, v: p.v }));
+      if (pts.length < 2) return;
+      let d = "M" + X(pts[0].i) + "," + Y(pts[0].v);
+      for (let k = 1; k < pts.length; k++) d += " L" + X(pts[k].i) + "," + Y(pts[k].v);
       out += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="1.2" opacity="0.85"/>';
     });
-    if (predPrice != null) {
+    if (predPrice != null && cv.ve === n) {
       const py = Y(predPrice);
       out += '<line x1="' + pad.l + '" y1="' + py + '" x2="' + (W - pad.r) + '" y2="' + py +
              '" stroke="#4c8dff" stroke-width="1.4" stroke-dasharray="5,5"/>' +
              '<text x="' + (W - pad.r + 4) + '" y="' + (py + 4) + '" fill="#4c8dff" font-size="10">預測 ' +
              predPrice.toFixed(2) + "</text>";
     }
-    out += '<text x="' + pad.l + '" y="' + (H - 4) + '" fill="#8b949e" font-size="10">' + ohlc[0][0] +
-           '</text><text x="' + (W - pad.r) + '" y="' + (H - 4) +
-           '" fill="#8b949e" font-size="10" text-anchor="end">' + ohlc[n - 1][0] + "</text>";
     out += '<line class="xh" x1="0" y1="' + pad.t + '" x2="0" y2="' + (H - pad.b) +
            '" stroke="#8b949e" stroke-width="1" stroke-dasharray="3,3" opacity="0"/>' +
            '<circle class="xh-c" r="3.5" fill="#4c8dff" stroke="#fff" stroke-width="1" opacity="0"/>' +
@@ -1121,70 +1185,118 @@
     if (!el.querySelector(".candle-tip")) {
       el.insertAdjacentHTML("beforeend", '<div class="candle-tip"></div>');
     }
-    // 滑鼠互動 (事件只綁一次於容器, 資料隨每次渲染更新)
+
+    // 事件只綁一次於容器; 資料/視窗狀態存 el.__cv
     const m5 = {}, m10 = {};
-    (maSeries[0] ? maSeries[0].points : []).forEach((p) => { m5[p.i] = p.v; });
-    (maSeries[1] ? maSeries[1].points : []).forEach((p) => { m10[p.i] = p.v; });
-    el.__candleCtx = { ohlc, m5, m10, pad, n, W, H, Y, innerW: W - pad.l - pad.r };
-    if (!el.__candleBound) {
-      el.__candleBound = true;
-      el.addEventListener("mousemove", (ev) => {
-        const ctx = el.__candleCtx;
-        const svg = el.querySelector("svg");
-        const tip = el.querySelector(".candle-tip");
-        if (!ctx || !svg || !tip) return;
-        const rect = svg.getBoundingClientRect();
-        if (!rect.width) return;
-        const mxv = (ev.clientX - rect.left) / rect.width * ctx.W;
-        let i = Math.round((mxv - ctx.pad.l) / (ctx.innerW / ctx.n) - 0.5);
-        i = Math.max(0, Math.min(ctx.n - 1, i));
-        const d = ctx.ohlc[i], prev = ctx.ohlc[i - 1];
-        const chg = prev ? (d[4] / prev[4] - 1) * 100 : null;
-        tip.innerHTML = "<b>" + d[0] + "</b><br>開 " + d[1].toFixed(2) + "　高 " + d[2].toFixed(2) +
-          "<br>低 " + d[3].toFixed(2) + "　收 <b>" + d[4].toFixed(2) + "</b>" +
-          (chg != null ? "<br>漲跌 <span class='" + (chg >= 0 ? "up" : "down") + "'>" +
-            (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%</span>" : "") +
-          "<br>MA5 " + (ctx.m5[i] != null ? ctx.m5[i].toFixed(2) : "—") +
-          "　MA10 " + (ctx.m10[i] != null ? ctx.m10[i].toFixed(2) : "—");
-        const elRect = el.getBoundingClientRect();
-        let tx = ev.clientX - elRect.left + 16;
-        if (tx > elRect.width - 185) tx = ev.clientX - elRect.left - 200;
-        tip.style.left = Math.max(2, tx) + "px";
-        tip.style.top = Math.max(4, ev.clientY - elRect.top - 24) + "px";
-        tip.style.display = "block";
-        const x = ctx.pad.l + ((i + 0.5) / ctx.n) * ctx.innerW;
-        const xh = el.querySelector(".xh");
-        xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.setAttribute("opacity", "0.85");
-        const dot = el.querySelector(".xh-c");
-        dot.setAttribute("cx", x); dot.setAttribute("cy", ctx.Y(d[4])); dot.setAttribute("opacity", "1");
-      });
-      el.addEventListener("mouseleave", () => {
-        const tip = el.querySelector(".candle-tip");
-        if (tip) tip.style.display = "none";
-        const xh = el.querySelector(".xh");
-        if (xh) xh.setAttribute("opacity", "0");
-        const dot = el.querySelector(".xh-c");
-        if (dot) dot.setAttribute("opacity", "0");
-      });
+    ma5all.forEach((p) => { m5[p.i] = p.v; });
+    ma10all.forEach((p) => { m10[p.i] = p.v; });
+    el.__cvCtx = { view, m5, m10, pad, m, W, H, Y, vs: cv.vs, ve: cv.ve, n, tf: cv.tf, predPrice };
+    if (!el.__cvBound) {
+      el.__cvBound = true;
+      bindChartInteractions(el);
     }
+  }
+
+  function bindChartInteractions(el) {
+    let dragging = false, dragX = 0, dragVS = 0, dragVE = 0;
+
+    function redraw() {
+      const s = state.selected && state.stocks[state.selected];
+      if (!s) return;
+      drawStockChart(state.selected);
+    }
+
+    el.addEventListener("wheel", (ev) => {
+      const cv = el.__cv;
+      if (!cv || !cv.data) return;
+      ev.preventDefault();
+      const svg = el.querySelector("svg");
+      const rect = svg.getBoundingClientRect();
+      const mxv = (ev.clientX - rect.left) / rect.width * cv.W;
+      const m = cv.ve - cv.vs;
+      const anchor = cv.vs + clamp01((mxv - cv.pad.l) / (cv.W - cv.pad.l - cv.pad.r)) * m;
+      const factor = ev.deltaY > 0 ? 1.18 : 1 / 1.18;
+      let span = Math.round(clamp(m * factor, 5, cv.n));
+      let vs = Math.round(anchor - (anchor - cv.vs) * (span / m));
+      vs = Math.max(0, Math.min(cv.n - span, vs));
+      cv.vs = vs; cv.ve = vs + span;
+      redraw();
+    }, { passive: false });
+
+    el.addEventListener("mousedown", (ev) => {
+      const cv = el.__cv;
+      if (!cv) return;
+      dragging = true; dragX = ev.clientX; dragVS = cv.vs; dragVE = cv.ve;
+      ev.preventDefault();
+    });
+    window.addEventListener("mousemove", (ev) => {
+      if (!dragging) return;
+      const cv = el.__cv;
+      const svg = el.querySelector("svg");
+      const rect = svg.getBoundingClientRect();
+      const shift = -((ev.clientX - dragX) / rect.width) * (cv.W - cv.pad.l - cv.pad.r) / (cv.W - cv.pad.l - cv.pad.r) * (cv.ve - cv.vs);
+      let vs = Math.round(dragVS + shift);
+      vs = Math.max(0, Math.min(cv.n - (cv.ve - cv.vs), vs));
+      cv.vs = vs; cv.ve = vs + (dragVE - dragVS);
+      redraw();
+    });
+    window.addEventListener("mouseup", () => { dragging = false; });
+
+    el.addEventListener("dblclick", () => {
+      const cv = el.__cv;
+      if (cv) { cv.vs = null; cv.ve = null; redraw(); }
+    });
+
+    el.addEventListener("mousemove", (ev) => {
+      const ctx = el.__cvCtx;
+      const svg = el.querySelector("svg");
+      const tip = el.querySelector(".candle-tip");
+      if (!ctx || !svg || !tip || dragging) { if (tip) tip.style.display = "none"; return; }
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width) return;
+      const mxv = (ev.clientX - rect.left) / rect.width * ctx.W;
+      let i = Math.round((mxv - ctx.pad.l) / (ctx.W - ctx.pad.l - ctx.pad.r) * ctx.m - 0.5);
+      i = Math.max(0, Math.min(ctx.m - 1, i));
+      const d = ctx.view[i], prev = ctx.view[i - 1];
+      const chg = prev ? (d.c / prev.c - 1) * 100 : null;
+      const tfName = ctx.tf === "w" ? "週" : ctx.tf === "m" ? "月" : "日";
+      tip.innerHTML = "<b>" + d.d + " (" + tfName + ")</b><br>開 " + d.o.toFixed(2) + "　高 " + d.h.toFixed(2) +
+        "<br>低 " + d.l.toFixed(2) + "　收 <b>" + d.c.toFixed(2) + "</b>" +
+        (chg != null ? "<br>漲跌 <span class='" + (chg >= 0 ? "up" : "down") + "'>" +
+          (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%</span>" : "") +
+        "<br>MA5 " + (ctx.m5[ctx.vs + i] != null ? ctx.m5[ctx.vs + i].toFixed(2) : "—") +
+        "　MA10 " + (ctx.m10[ctx.vs + i] != null ? ctx.m10[ctx.vs + i].toFixed(2) : "—");
+      const elRect = el.getBoundingClientRect();
+      let tx = ev.clientX - elRect.left + 16;
+      if (tx > elRect.width - 190) tx = ev.clientX - elRect.left - 205;
+      tip.style.left = Math.max(2, tx) + "px";
+      tip.style.top = Math.max(4, ev.clientY - elRect.top - 24) + "px";
+      tip.style.display = "block";
+      const x = ctx.pad.l + ((i + 0.5) / ctx.m) * (ctx.W - ctx.pad.l - ctx.pad.r);
+      const xh = el.querySelector(".xh");
+      xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.setAttribute("opacity", "0.85");
+      const dot = el.querySelector(".xh-c");
+      dot.setAttribute("cx", x); dot.setAttribute("cy", ctx.Y(d.c)); dot.setAttribute("opacity", "1");
+    });
+    el.addEventListener("mouseleave", () => {
+      const tip = el.querySelector(".candle-tip");
+      if (tip) tip.style.display = "none";
+      const xh = el.querySelector(".xh");
+      if (xh) xh.setAttribute("opacity", "0");
+      const dot = el.querySelector(".xh-c");
+      if (dot) dot.setAttribute("opacity", "0");
+    });
   }
 
   function drawStockChart(code, historyOverride) {
     const s = state.stocks[code];
-    // OHLC 資料 (專案快照或 Yahoo 即時歷史) → 蠟燭圖
+    // OHLC 資料 (專案快照 130 日或 Yahoo 即時歷史) → 互動式蠟燭圖 (日/週/月、縮放平移)
     let ohlc = s.ohlc;
     if (historyOverride && historyOverride.length > 10 && historyOverride[0].length >= 5) {
-      ohlc = historyOverride;                       // 真實報價模式: Yahoo 3 個月 OHLC
+      ohlc = historyOverride;                       // 真實報價模式: Yahoo 1 年 OHLC
     }
     if (ohlc && ohlc.length >= 30) {
-      const closes = ohlc.map((x) => x[4]);
-      const maOf = (n) => closes.map((_, i) => {
-        if (i < n - 1) return null;
-        return { i, v: mean(closes.slice(i - n + 1, i + 1)) };
-      }).filter(Boolean);
-      svgCandles($("#priceChart"), ohlc,
-                 [{ color: "#f0534f", points: maOf(5) }, { color: "#2fbf71", points: maOf(10) }],
-                 s.predPrice);
+      renderCandleChart($("#priceChart"), ohlc, null, s.predPrice);
       return;
     }
     const hist = (historyOverride && historyOverride.length > 10
@@ -1582,7 +1694,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v12 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v14 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
@@ -1648,6 +1760,15 @@
     };
     $("#pStrategy").onchange();
     $("#btnRerunPattern").onclick = () => { if (state.selected) renderPattern(state.selected); };
+    document.querySelectorAll(".tf-btn").forEach((b) => {
+      b.onclick = () => {
+        document.querySelectorAll(".tf-btn").forEach((x) => x.classList.remove("active"));
+        b.classList.add("active");
+        const cv = $("#priceChart").__cv;
+        if (cv) cv.tf = b.dataset.tf;      // 切換聚合 (n 變動時引擎自動重設視窗)
+        if (state.selected) drawStockChart(state.selected);
+      };
+    });
     $("#btnAskAI").onclick = () => { if (state.selected) askAI(state.selected); };
     const syncKeyPlaceholder = () => {
       const prov = $("#aiModel").value.startsWith("claude") ? "claude" : "gemini";

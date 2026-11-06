@@ -74,16 +74,16 @@ def main():
     stocks = []
     for _, row in sig.iterrows():
         code = row["code"]
-        g = feats[feats["code"] == code].sort_values("date")
-        if len(g) < 60:
+        g_all = feats[feats["code"] == code].sort_values("date")
+        if len(g_all) < 60:
             continue
-        g = g.tail(HISTORY_DAYS + 1)
+        g = g_all.tail(HISTORY_DAYS + 1)
         history = [[d, round(float(c), 2)] for d, c in zip(g["date"], g["close"])]
         last_close = history[-1][1]  # 走勢最後一日收盤 (訊號檔無 last_close 欄)
 
-        # K 線 (近 45 日 OHLC, 供形態比對與蠟燭圖)
+        # K 線 (近 130 日 OHLC, 供日/週/月線切換與縮放瀏覽) — 從未切片的 g_all 取
         ohlc = []
-        for _, r2 in g.tail(45).iterrows():
+        for _, r2 in g_all.tail(130).iterrows():
             if pd.notna(r2["open"]) and pd.notna(r2["high"]) and pd.notna(r2["low"]):
                 ohlc.append([r2["date"], round(float(r2["open"]), 2), round(float(r2["high"]), 2),
                              round(float(r2["low"]), 2), round(float(r2["close"]), 2)])

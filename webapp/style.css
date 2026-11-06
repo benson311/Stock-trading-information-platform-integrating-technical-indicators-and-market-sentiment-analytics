@@ -187,6 +187,15 @@ footer {
   font-size: 12px; color: var(--text-dim);
 }
 
+/* ---------- 時間軸切換 ---------- */
+.tf-bar { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
+.tf-label { font-size: 12px; color: var(--text-dim); margin-right: 2px; }
+.tf-btn {
+  padding: 3px 14px; background: var(--panel-2); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 5px; cursor: pointer; font-size: 12px;
+}
+.tf-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; }
+
 /* ---------- 內嵌詳情列 (點股票展開在該列下方) ---------- */
 #marketTable tr.detail-inline-row > td {
   padding: 0 12px 12px; background: var(--panel);
