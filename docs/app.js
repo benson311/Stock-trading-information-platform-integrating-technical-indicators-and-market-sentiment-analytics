@@ -827,18 +827,38 @@
       sells.push({ code: x.code, shares: x.shares, px, pr });
       msg += "・" + state.stocks[x.code].name + " " + (x.shares / LOT) + " 張，淨得 " + fmtMoney(pr.total) + "\n";
     });
-    const targets = top.filter((t) => !heldCodes.has(t.s.code) && !toSell.some((x) => x.code === t.s.code))
-                       .slice(0, Math.max(toSell.length, 3));
-    const alloc = pool / targets.length;
-    msg += "\n【買進（等分分配）】\n";
+    // 預算 = 賣出所得 + 可用現金 (現金也一併投入換股)
+    const budget = pool + Math.max(0, state.account.cash);
+    // 目標選擇: 依綜合分排序, 只挑「至少買得起一張」的標的 (買不起往下找, 不再誤報資金不足)
+    const wantN = Math.max(toSell.length, 3);
+    const targets = [];
+    for (const want of [wantN, 2, 1]) {
+      targets.length = 0;
+      const per = budget / want;
+      for (const x of scored) {
+        if (targets.length >= want) break;
+        if (heldCodes.has(x.s.code) || toSell.some((t) => t.code === x.s.code)) continue;
+        if (targets.some((t) => t.t.code === x.s.code)) continue;
+        const px = livePrice(x.s.code);
+        if (px * LOT > per) continue;          // 買不起一張 → 往分數較低但買得起的找
+        targets.push({ t: x.s, sc: x.sc });
+      }
+      if (targets.length) break;
+    }
+    if (!targets.length) {
+      toast("換股資金（賣出所得 " + fmtMoney(pool) + " + 現金 " + fmtMoney(Math.max(0, state.account.cash)) +
+            "）買不起任何候選一張——建議改用手動下單", true);
+      return;
+    }
+    const alloc = budget / targets.length;
+    msg += "\n【買進（等分分配，預算 " + fmtMoney(budget) + " = 賣出所得+現金）】\n";
     const buys = [];
     targets.forEach((t) => {
-      const px = livePrice(t.s.code);
-      const lots = Math.floor(alloc / (px * LOT));
-      if (lots < 1) return;
+      const px = livePrice(t.t.code);
+      const lots = Math.max(1, Math.floor(alloc / (px * LOT)));
       const cost = buyCost(lots * LOT, px);
-      buys.push({ t: t.s, px, lots, shares: lots * LOT, cost: cost.total, fee: cost.fee });
-      msg += "・" + t.s.name + " " + lots + " 張 @" + px.toFixed(2) + "（投入 " + fmtMoney(cost.total) + "）\n";
+      buys.push({ t: t.t, px, lots, shares: lots * LOT, cost: cost.total, fee: cost.fee });
+      msg += "・" + t.t.name + " " + lots + " 張 @" + px.toFixed(2) + "（投入 " + fmtMoney(cost.total) + "）\n";
     });
     if (!buys.length) { toast("換股資金不足以買進任何一張", true); return; }
     // 現金防護: 買進總額不得超過 賣出所得+現金
@@ -1974,7 +1994,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v18 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v19 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
