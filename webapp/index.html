@@ -181,6 +181,13 @@
       <table class="table" id="posTable"></table>
       <p class="hint" id="posSummary"></p>
     </div>
+    <div class="panel">
+      <h3>賣出建議與時機</h3>
+      <p class="hint">賣出壓力評分 0~100（越高越該賣）＝ 模型訊號(35) + 停損停利(25) + 形態比對(20) + 技術破線(15) + 高點回落(10) + 新聞轉空(10)。
+        預設門檻：停損 −7%、停利 +15%、trailing 回落 −8%。點列可看個股詳情。</p>
+      <table class="table row-click" id="sellTable"></table>
+      <p class="hint" id="sellSummary"></p>
+    </div>
   </section>
 
   <!-- ============ 投組建議 ============ -->
@@ -214,6 +221,11 @@
       <div class="calc-preview" id="pStrategyDesc"></div>
       <div class="calc-preview" id="pSummary"></div>
       <table class="table" id="portfolioTable"></table>
+    </div>
+    <div class="panel">
+      <h3>換股建議（持股 vs 市場候選）</h3>
+      <p class="hint">以「綜合 AI」分數（模型40%+技術35%+新聞25%）比較你的持股與目前市場前段候選：持股分數顯著落後時，建議賣出並轉進分數更高的標的。先按上方「產生配置」更新候選池。</p>
+      <table class="table" id="rotateTable"></table>
     </div>
   </section>
 

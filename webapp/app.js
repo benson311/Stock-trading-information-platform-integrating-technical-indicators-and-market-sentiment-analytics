@@ -547,7 +547,12 @@
     sc = Math.round(Math.max(0, Math.min(100, sc)));
     const rating = sc >= 65 ? "偏多" : sc <= 45 ? "偏空" : "中性";
     const newsV = s.newsAvg20 || 0;
-    const text =
+    let text = "";
+    if (state.account.positions[code] && state.account.positions[code].shares > 0) {
+      const adv = sellAdvice(code);
+      text += `【持有狀態】持股中，損益 ${fmtPct(adv.ret)}，賣出壓力 ${adv.score}/100（${adv.action}）。\n`;
+    }
+    text +=
       `【形態比對】近 ${PatternMatch.L} 日走勢與歷史 ${pm.top.length} 段最相似` +
       `（${pm.top.slice(0, 3).map((t) => t.code + " " + t.name).join("、")} 等），` +
       `後續 ${PatternMatch.F} 日上漲比例 ${(pm.upRate * 100).toFixed(0)}%，平均 ${fmtPct(pm.avgFwd)}。\n` +
@@ -572,6 +577,15 @@
       相似情境明細: pm.top.map((t) => ({ 股票: t.code, 後20日報酬: (t.fwdRet * 100).toFixed(1) + "%" })),
       近20日新聞淨情緒: s.newsAvg20 || 0,
     };
+    const pos = state.account.positions[code];
+    if (pos && pos.shares > 0) {
+      const adv = sellAdvice(code);
+      facts.持倉 = {
+        股數: pos.shares, 均價成本: Math.round(pos.avgCost * 100) / 100,
+        損益百分位: ((livePrice(code) / pos.avgCost - 1) * 100).toFixed(1) + "%",
+        賣出壓力分: adv.score, 建議動作: adv.action,
+      };
+    }
   }
 
   function aiPrompt(facts) {
@@ -700,6 +714,126 @@
     $("#patternStats").dataset.code = code;
   }
 
+
+  /* ---------- 賣出壓力評分 / 換股建議 ---------- */
+
+  function sellAdvice(code) {
+    const p = state.account.positions[code];
+    const s = state.stocks[code];
+    const live = livePrice(code);
+    const ret = live / p.avgCost - 1;
+    const h = s.history.map((x) => x[1]);
+    const rsi = rsiN(h, 14);
+    const ma5 = s.ma5 || mean(h.slice(-5)), ma10 = s.ma10 || mean(h.slice(-10));
+    let sc = 0;
+    const reasons = [];
+    if (s.signal === "SELL") { sc += 35; reasons.push("模型訊號轉 SELL（預測價 < MA5×0.95）"); }
+    else if (s.signal === "HOLD") { sc += 8; reasons.push("模型訊號 HOLD（無方向）"); }
+    if (ret <= -0.07) { sc += 25; reasons.push("觸及停損門檻（報酬 " + fmtPct(ret) + " ≤ −7%）"); }
+    else if (ret <= -0.05) { sc += 10; reasons.push("接近停損（報酬 " + fmtPct(ret) + "）"); }
+    else if (ret >= 0.15) { sc += 15; reasons.push("達停利門檻（報酬 " + fmtPct(ret) + " ≥ +15%）——可分批獲利了結"); }
+    const pm = PatternMatch.find(code);
+    if (pm.top.length) {
+      if (pm.upRate <= 1 / 3) { sc += 20; reasons.push("形態比對偏空（歷史相似僅 " + Math.round(pm.upRate * 100) + "% 上漲，平均後20日 " + fmtPct(pm.avgFwd) + "）"); }
+      else if (pm.upRate < 0.5) { sc += 10; reasons.push("形態比對略偏空（上漲比例 " + Math.round(pm.upRate * 100) + "%）"); }
+    }
+    if (live < ma5 && live < ma10) { sc += 15; reasons.push("收盤同時跌破 MA5 與 MA10"); }
+    else if (live < ma10) { sc += 8; reasons.push("跌破 MA10"); }
+    if (rsi > 75) { sc += 10; reasons.push("RSI14 " + rsi.toFixed(0) + " 過熱，回檔風險"); }
+    if ((s.newsAvg20 || 0) < -0.05) { sc += 10; reasons.push("新聞情緒轉空（" + (s.newsAvg20 || 0).toFixed(2) + "）"); }
+    const high = p.high || p.avgCost;
+    const dd = live / high - 1;
+    if (dd <= -0.08) { sc += 10; reasons.push("自持有期高點回落 " + fmtPct(dd) + "（trailing −8%）"); }
+    sc = Math.min(100, Math.round(sc));
+    const action = sc >= 70 ? "建議賣出" : sc >= 50 ? "考慮減碼" : sc >= 30 ? "持有觀察" : "續抱";
+    return {
+      score: sc, action, reasons, ret, rsi,
+      stop: p.avgCost * (1 - 0.07), target: p.avgCost * (1 + 0.15),
+    };
+  }
+
+  function actionBadge(action) {
+    const cls = action === "建議賣出" ? "sell" : action === "考慮減碼" ? "hold" :
+                action === "續抱" ? "buy" : "hold";
+    return '<span class="badge ' + cls + '">' + action + "</span>";
+  }
+
+  function renderSellAdvice() {
+    const rows = positionList();
+    const tbl = $("#sellTable");
+    if (!tbl) return;
+    if (!rows.length) {
+      tbl.innerHTML = "<tbody><tr><td colspan='6' class='hint' style='text-align:center;padding:24px'>尚無持倉——買進後此處提供每檔持股的賣出時機建議</td></tr></tbody>";
+      return;
+    }
+    const advs = rows.map((p) => ({ p, adv: sellAdvice(p.code) }))
+                     .sort((a, b) => b.adv.score - a.adv.score);
+    tbl.innerHTML =
+      "<thead><tr><th>股票</th><th class='num-r'>損益</th><th class='num-r'>賣出壓力</th><th>建議動作</th><th>關鍵價位</th><th>主要依據</th></tr></thead><tbody>" +
+      advs.map((x) => {
+        const a = x.adv;
+        const s = state.stocks[x.p.code];
+        const key = "停損 " + a.stop.toFixed(2) + " / 停利 " + a.target.toFixed(2) +
+                    " / MA10 " + (s.ma10 ? s.ma10.toFixed(2) : "—");
+        return "<tr data-code='" + x.p.code + "'><td><b>" + x.p.code + "</b> " + s.name + "</td>" +
+          "<td class='num-r " + pctClass(a.ret) + "'>" + fmtPct(a.ret) + "</td>" +
+          "<td class='num-r'><b>" + a.score + "</b>/100</td>" +
+          "<td>" + actionBadge(a.action) + "</td>" +
+          "<td class='hint'>" + key + "</td>" +
+          "<td class='hint'>" + (a.reasons.slice(0, 2).join("；") || "—") + "</td></tr>";
+      }).join("") + "</tbody>";
+    tbl.querySelectorAll("tbody tr[data-code]").forEach((tr) => {
+      tr.style.cursor = "pointer";
+      tr.onclick = () => { switchTab("market"); openDetail(tr.dataset.code); };
+    });
+    const nSell = advs.filter((x) => x.adv.action === "建議賣出").length;
+    const nCut = advs.filter((x) => x.adv.action === "考慮減碼").length;
+    const sum = $("#sellSummary");
+    if (sum) sum.textContent = "建議賣出 " + nSell + " 檔 · 考慮減碼 " + nCut + " 檔 · 其餘續抱/觀察（門檻：停損 −7%、停利 +15%）";
+  }
+
+  function renderRotate() {
+    const tbl = $("#rotateTable");
+    if (!tbl) return;
+    buildCrossSections();
+    const held = positionList();
+    if (!held.length) {
+      tbl.innerHTML = "<tbody><tr><td colspan='5' class='hint' style='text-align:center;padding:24px'>尚無持倉——買進後此處比較持股與市場候選，提供換股建議</td></tr></tbody>";
+      return;
+    }
+    const scored = D.stocks.map((s) => ({ s, sc: compositeScore(s) }))
+                           .sort((a, b) => b.sc - a.sc);
+    const top = scored.slice(0, 10);
+    const heldCodes = new Set(held.map((p) => p.code));
+    const minKeep = top.length ? top[top.length - 1].sc - 5 : 0;
+    const rows = [];
+    held.forEach((p) => {
+      const s = state.stocks[p.code];
+      const sc = compositeScore(s);
+      const best = top.find((t) => !heldCodes.has(t.s.code));
+      if (sc < minKeep && best) {
+        rows.push({ s, sc, act: "換股", to: best.s, bestSc: best.sc });
+      } else {
+        rows.push({ s, sc, act: "續抱", to: null, bestSc: null });
+      }
+    });
+    const nRot = rows.filter((r) => r.act === "換股").length;
+    tbl.innerHTML =
+      "<thead><tr><th>持股</th><th class='num-r'>綜合分</th><th>建議</th><th>轉進標的</th><th class='num-r'>候選分</th></tr></thead><tbody>" +
+      rows.map((r) => "<tr><td><b>" + r.s.code + "</b> " + r.s.name + "</td>" +
+        "<td class='num-r'>" + r.sc.toFixed(0) + "</td>" +
+        "<td>" + (r.act === "換股"
+          ? "<span class='badge sell'>建議換股</span> <span class='hint'>持股分數落後市場前段</span>"
+          : "<span class='badge buy'>續抱</span>") + "</td>" +
+        "<td>" + (r.to ? "<b>" + r.to.code + "</b> " + r.to.name : "—") + "</td>" +
+        "<td class='num-r'>" + (r.to ? r.bestSc.toFixed(0) : "—") + "</td></tr>").join("") +
+      "</tbody>";
+    const oldNote = document.getElementById("rotateNote");
+    if (oldNote && oldNote.parentNode) oldNote.parentNode.removeChild(oldNote);
+    tbl.insertAdjacentHTML("afterend",
+      "<p class='hint' id='rotateNote'>綜合分前段門檻 " + minKeep.toFixed(0) + "：換股建議 " + nRot +
+      " 檔、續抱 " + (rows.length - nRot) + " 檔。換股僅為評分比較結果，請自行評估交易成本（來回約 0.6%）。</p>");
+  }
 
   function tierCodes() {
     const all = D.stocks.map((s) => s.code);
@@ -1405,6 +1539,7 @@
       const pos = acc.positions[code] || { shares: 0, avgCost: 0 };
       pos.avgCost = (pos.shares * pos.avgCost + c.total) / (pos.shares + shares);
       pos.shares += shares;
+      pos.high = Math.max(pos.high || 0, price);
       acc.positions[code] = pos;
       acc.trades.unshift({ t: Date.now(), side: "BUY", code, name: s.name, lots, price,
                            fee: c.fee, tax: 0, total: c.total });
@@ -1461,6 +1596,7 @@
       tr.style.cursor = "pointer";
       tr.onclick = () => { switchTab("market"); openDetail(tr.dataset.code); };
     });
+    renderSellAdvice();
     const posV = positionValue();
     $("#posSummary").innerHTML = rows.length ?
       "持倉市值 " + fmtMoney(posV) + " · 現金 " + fmtMoney(state.account.cash) +
@@ -1592,6 +1728,7 @@
       const pos = acc.positions[r.s.code] || { shares: 0, avgCost: 0 };
       pos.avgCost = (pos.shares * pos.avgCost + r.cost) / (pos.shares + r.shares);
       pos.shares += r.shares;
+      pos.high = Math.max(pos.high || 0, r.px);
       acc.positions[r.s.code] = pos;
       acc.trades.unshift({ t: Date.now(), side: "BUY", code: r.s.code, name: r.s.name,
                            lots: r.lots, price: r.px, fee: r.fee, tax: 0, total: r.cost });
@@ -1651,7 +1788,15 @@
   }
 
   function refreshPrices() {
+    // 持倉期高點追蹤 (trailing stop 用)
+    for (const c in state.account.positions) {
+      const p = state.account.positions[c];
+      const lv = state.live[c] != null ? state.live[c] : (state.stocks[c] ? state.stocks[c].lastClose : null);
+      if (lv != null) p.high = Math.max(p.high || p.avgCost, lv);
+    }
     renderMarket();
+    renderSellAdvice();
+    renderRotate();
     if (state.selected) {
       const s = state.stocks[state.selected];
       const ch = changePct(state.selected);
@@ -1685,6 +1830,8 @@
       b.classList.toggle("active", b.dataset.tab === name));
     if (name === "dashboard") { drawNavChart(); drawPie(); }
     if (name === "market" && state.selected) drawStockChart(state.selected);
+    if (name === "positions") renderSellAdvice();
+    if (name === "portfolio") renderRotate();
   }
 
   function init() {
