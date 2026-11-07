@@ -758,6 +758,118 @@
     return '<span class="badge ' + cls + '">' + action + "</span>";
   }
 
+  function buildSellPlan() {
+    const plan = [];
+    positionList().forEach((p) => {
+      const adv = sellAdvice(p.code);
+      if (adv.action === "建議賣出") {
+        plan.push({ code: p.code, shares: p.shares, mode: "全賣（建議賣出）" });
+      } else if (adv.action === "考慮減碼") {
+        const lots = Math.max(1, Math.floor(p.shares / LOT / 2));
+        plan.push({ code: p.code, shares: lots * LOT, mode: "減碼 " + lots + " 張（考慮減碼）" });
+      }
+    });
+    return plan;
+  }
+
+  function oneClickSell() {
+    const plan = buildSellPlan();
+    if (!plan.length) { toast("目前沒有持股達到賣出/減碼門檻（壓力分 ≥ 50）", true); return; }
+    let msg = "確認一鍵分配賣出？\n\n";
+    let totalNet = 0;
+    plan.forEach((x) => {
+      const px = livePrice(x.code);
+      const pr = sellProceeds(x.shares, px);
+      totalNet += pr.total;
+      msg += "・" + state.stocks[x.code].name + " " + (x.shares / LOT) + " 張 @" + px.toFixed(2) +
+             "（" + x.mode + "，淨得 " + fmtMoney(pr.total) + "）\n";
+    });
+    msg += "\n合計淨得約 " + fmtMoney(totalNet) + "（已含手續費與證交稅）";
+    if (!confirm(msg)) return;
+    const acc = state.account;
+    plan.forEach((x) => {
+      const px = livePrice(x.code);
+      const pos = acc.positions[x.code];
+      const pr = sellProceeds(x.shares, px);
+      acc.cash += pr.total;
+      pos.shares -= x.shares;
+      if (pos.shares <= 0) delete acc.positions[x.code];
+      acc.trades.unshift({ t: Date.now(), side: "SELL", code: x.code,
+                           name: state.stocks[x.code].name, lots: x.shares / LOT,
+                           price: px, fee: pr.fee, tax: pr.tax, total: pr.total });
+    });
+    save(); snapshotNav();
+    toast("一鍵賣出完成：" + plan.length + " 檔，淨得 " + fmtMoney(totalNet) + " ✓");
+    renderAll();
+  }
+
+  function oneClickRotate() {
+    buildCrossSections();
+    const held = positionList();
+    if (!held.length) { toast("尚無持倉", true); return; }
+    const scored = D.stocks.map((s) => ({ s, sc: compositeScore(s) })).sort((a, b) => b.sc - a.sc);
+    const top = scored.slice(0, 10);
+    const heldCodes = new Set(held.map((p) => p.code));
+    const minKeep = top.length ? top[top.length - 1].sc - 5 : 0;
+    const toSell = [];
+    held.forEach((p) => {
+      const sc = compositeScore(state.stocks[p.code]);
+      if (sc < minKeep) toSell.push({ code: p.code, shares: p.shares });
+    });
+    if (!toSell.length) { toast("所有持股都在市場前段門檻內，目前無換股建議"); return; }
+    let msg = "確認一鍵換股？\n\n【賣出】\n";
+    let pool = 0;
+    const sells = [];
+    toSell.forEach((x) => {
+      const px = livePrice(x.code);
+      const pr = sellProceeds(x.shares, px);
+      pool += pr.total;
+      sells.push({ code: x.code, shares: x.shares, px, pr });
+      msg += "・" + state.stocks[x.code].name + " " + (x.shares / LOT) + " 張，淨得 " + fmtMoney(pr.total) + "\n";
+    });
+    const targets = top.filter((t) => !heldCodes.has(t.s.code) && !toSell.some((x) => x.code === t.s.code))
+                       .slice(0, Math.max(toSell.length, 3));
+    const alloc = pool / targets.length;
+    msg += "\n【買進（等分分配）】\n";
+    const buys = [];
+    targets.forEach((t) => {
+      const px = livePrice(t.s.code);
+      const lots = Math.floor(alloc / (px * LOT));
+      if (lots < 1) return;
+      const cost = buyCost(lots * LOT, px);
+      buys.push({ t: t.s, px, lots, shares: lots * LOT, cost: cost.total, fee: cost.fee });
+      msg += "・" + t.s.name + " " + lots + " 張 @" + px.toFixed(2) + "（投入 " + fmtMoney(cost.total) + "）\n";
+    });
+    if (!buys.length) { toast("換股資金不足以買進任何一張", true); return; }
+    // 現金防護: 買進總額不得超過 賣出所得+現金
+    let cashAfter = state.account.cash + pool - buys.reduce((a, b) => a + b.cost, 0);
+    while (cashAfter < 0 && buys.length > 1) { const dropped = buys.pop(); cashAfter += dropped.cost; }
+    msg += "\n執行後現金約 " + fmtMoney(cashAfter);
+    if (!confirm(msg)) return;
+    const acc = state.account;
+    sells.forEach((x) => {
+      const pos = acc.positions[x.code];
+      acc.cash += x.pr.total;
+      pos.shares -= x.shares;
+      if (pos.shares <= 0) delete acc.positions[x.code];
+      acc.trades.unshift({ t: Date.now(), side: "SELL", code: x.code, name: state.stocks[x.code].name,
+                           lots: x.shares / LOT, price: x.px, fee: x.pr.fee, tax: x.pr.tax, total: x.pr.total });
+    });
+    buys.forEach((b) => {
+      acc.cash -= b.cost;
+      const pos = acc.positions[b.t.code] || { shares: 0, avgCost: 0 };
+      pos.avgCost = (pos.shares * pos.avgCost + b.cost) / (pos.shares + b.shares);
+      pos.shares += b.shares;
+      pos.high = Math.max(pos.high || 0, b.px);
+      acc.positions[b.t.code] = pos;
+      acc.trades.unshift({ t: Date.now(), side: "BUY", code: b.t.code, name: b.t.name,
+                           lots: b.lots, price: b.px, fee: b.fee, tax: 0, total: b.cost });
+    });
+    save(); snapshotNav();
+    toast("一鍵換股完成：賣出 " + sells.length + " 檔、買進 " + buys.length + " 檔 ✓");
+    renderAll();
+  }
+
   function renderSellAdvice() {
     const rows = positionList();
     const tbl = $("#sellTable");
@@ -1862,7 +1974,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v17 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v18 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
@@ -1923,6 +2035,8 @@
     };
     $("#btnOptimize").onclick = optimizePortfolio;
     $("#btnApply").onclick = applyPortfolio;
+    $("#btnOneClickSell").onclick = oneClickSell;
+    $("#btnOneClickRotate").onclick = oneClickRotate;
     $("#pStrategy").onchange = () => {
       const st = Strategies[$("#pStrategy").value];
       $("#pStrategyDesc").innerHTML = st ? "<span class='strategy-tag'>" + st.label + "</span> " + st.desc : "";

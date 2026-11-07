@@ -190,6 +190,10 @@
         預設門檻：停損 −7%、停利 +15%、trailing 回落 −8%。點列可看個股詳情。</p>
       <table class="table row-click" id="sellTable"></table>
       <p class="hint" id="sellSummary"></p>
+      <div class="ai-actions">
+        <button class="btn btn-primary" id="btnOneClickSell">⚡ 一鍵分配賣出</button>
+        <span class="hint">「建議賣出」全賣、「考慮減碼」減半（張數取整）、其餘不動——執行前會顯示確認清單與費用試算</span>
+      </div>
     </div>
   </section>
 
@@ -229,6 +233,10 @@
       <h3>換股建議（持股 vs 市場候選）</h3>
       <p class="hint">以「綜合 AI」分數（模型40%+技術35%+新聞25%）比較你的持股與目前市場前段候選：持股分數顯著落後時，建議賣出並轉進分數更高的標的。先按上方「產生配置」更新候選池。</p>
       <table class="table" id="rotateTable"></table>
+      <div class="ai-actions">
+        <button class="btn btn-primary" id="btnOneClickRotate">⚡ 一鍵換股（賣出→買入建議標的）</button>
+        <span class="hint">賣出「建議換股」持股，所得等分買進建議標的（扣台股費用）；執行前會顯示確認清單</span>
+      </div>
     </div>
   </section>
 
