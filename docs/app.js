@@ -1158,6 +1158,11 @@
   }
 
   function openDetail(code) {
+    if (state.selected === code && !$("#detailPanel").hidden &&
+        $("#detailPanel").style.display !== "none") {
+      closeDetail();          // 再點同一檔 → 收合
+      return;
+    }
     state.selected = code;
     repositionDetail();              // 先把面板嵌入該列下方 (寬度正確)
     selectStock(code);               // 再畫圖/統計/形態比對
@@ -1165,6 +1170,13 @@
     if (panel && panel.style.display !== "none") {
       panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
+  }
+
+  function closeDetail() {
+    state.selected = null;
+    const panel = $("#detailPanel");
+    if (panel) panel.hidden = true;
+    repositionDetail();              // 移除內嵌列並隱藏面板
   }
 
   async function maybeRealHistory(code) {
@@ -1850,7 +1862,7 @@
     $("#priceAsOf").textContent = D.priceAsOf;
     $("#genAt").textContent = D.generatedAt;
     $("#dataNotice").textContent =
-      "【前端 v16 · " + new Date().toLocaleDateString("zh-TW") + "】" +
+      "【前端 v17 · " + new Date().toLocaleDateString("zh-TW") + "】" +
       "模擬盤 = 模型導向虛擬市場：個股自昨收出發，疊加市場/產業連動與個股歷史波動之雜訊，" +
       "並依模型預測收斂——虛擬收盤即模型預測價（重播同一預測日）。預測為資料快照日的次一交易日；" +
       "每日收盤後重跑 export_webapp_data.py 可取得「明日」預測。" +
@@ -1899,6 +1911,7 @@
       b.onclick = () => setSource(b.dataset.src);
     });
     setSource(state.source || "sim");
+    $("#btnCloseDetail").onclick = () => closeDetail();
     $("#btnBuyFromDetail").onclick = () => {
       switchTab("trade");
       $("#tStock").value = state.selected;
